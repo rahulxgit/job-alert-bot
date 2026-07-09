@@ -34,7 +34,7 @@ SEARCH_TERMS = [
 
 LOCATIONS = ["Bengaluru, India", "India"]
 
-SITES = ["indeed", "linkedin", "naukri"]
+SITES = ["indeed", "linkedin"]
 
 RESULTS_PER_SITE = 30
 HOURS_OLD = 24  # only look at listings posted in the last day
@@ -192,6 +192,10 @@ def main():
 
     ranked = filter_and_rank(raw_jobs)
     print(f"{len(ranked)} listings passed the relevance filter")
+
+    if ranked.empty:
+        print("No listings matched today — nothing to log or email.")
+        return
 
     sheet = get_sheet()
     seen = get_seen_urls(sheet)
