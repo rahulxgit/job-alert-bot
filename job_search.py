@@ -3,7 +3,7 @@ Daily job alert bot.
 
 Pulls fresher/SDE-1 listings from Indeed, LinkedIn, Google Jobs (via jobspy)
 and Internshala (paid internships only), runs a cheap keyword pre-filter to
-cut the list down, then sends the survivors to the Claude API to actually
+cut the list down, then sends the survivors to the Gemini API to actually
 read each job description against my resume and decide real fit — not just
 keyword overlap. Logs matches to a Google Sheet so I don't see repeats, and
 emails me the digest.
@@ -74,12 +74,12 @@ PRIORITY_COMPANIES = [
 
 # How many pre-filtered candidates to actually send to the LLM per run —
 # caps API spend even on a day with a huge raw pull
-MAX_LLM_CANDIDATES = 60
-LLM_FIT_THRESHOLD = 60  # 0-100 scale; only keep jobs Claude scores at or above this
+MAX_LLM_CANDIDATES = 40
+LLM_FIT_THRESHOLD = 60  # 0-100 scale; only keep jobs Gemini scores at or above this
 
 SHEET_ID = os.environ["GOOGLE_SHEET_ID"]
 GMAIL_TO = os.environ["ALERT_EMAIL_TO"]
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 # My actual background — this is what the LLM checks each job against.
 # Keep this in sync with resume-portfolio-sync's profile-data.json.
@@ -245,6 +245,10 @@ def prefilter(df: pd.DataFrame, min_score: int = 3) -> pd.DataFrame:
 # Stage 2 — Claude reads each JD against my actual resume/profile
 # ---------------------------------------------------------------------------
 
+GEMINI_MODEL = "gemini-2.5-flash-lite"  # free tier, generous daily quota
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+
+
 def llm_evaluate_job(title: str, company: str, description: str) -> dict:
     """
     Returns {"fit_score": int 0-100, "is_fresher_appropriate": bool, "reason": str}
@@ -269,21 +273,16 @@ other text, in this exact shape:
 
     try:
         resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
+            GEMINI_URL,
+            headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
             json={
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 200,
-                "messages": [{"role": "user", "content": prompt}],
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0, "maxOutputTokens": 200},
             },
             timeout=30,
         )
         resp.raise_for_status()
-        text = resp.json()["content"][0]["text"].strip()
+        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         return json.loads(text)
     except Exception as exc:
@@ -303,7 +302,9 @@ def llm_filter(df: pd.DataFrame) -> pd.DataFrame:
             str(row.get("description", "")),
         )
         results.append(verdict)
-        time.sleep(0.3)  # light throttling
+        # Free-tier Gemini is rate-limited (~15 req/min on Flash-Lite) —
+        # pace calls to stay comfortably under that instead of racing into 429s
+        time.sleep(4.5)
 
     df = df.copy()
     df["fit_score"] = [r["fit_score"] for r in results]
@@ -371,7 +372,7 @@ def build_email_body(df: pd.DataFrame) -> str:
     if df.empty:
         return "No new matching listings today."
 
-    lines = [f"{len(df)} new job(s) matched today (Claude-reviewed):\n"]
+    lines = [f"{len(df)} new job(s) matched today (Gemini-reviewed):\n"]
     for _, row in df.iterrows():
         lines.append(
             f"- {row.get('title')} @ {row.get('company')} ({row.get('location')}) "
@@ -425,7 +426,7 @@ def main():
         return
 
     reviewed = llm_filter(unseen_shortlist)
-    print(f"{len(reviewed)} passed Claude's fit review (score >= {LLM_FIT_THRESHOLD})")
+    print(f"{len(reviewed)} passed Gemini's fit review (score >= {LLM_FIT_THRESHOLD})")
 
     log_new_jobs(sheet, reviewed)
 

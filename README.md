@@ -1,10 +1,10 @@
 # Job Alert Bot
 
 Scrapes Indeed, LinkedIn, Google Jobs and Internshala every morning, runs a
-cheap keyword pre-filter, then sends the shortlist to Claude to actually read
-each job description against my resume and decide real fit — not just
-keyword overlap. Logs new matches to a Google Sheet and emails me the digest.
-Runs on GitHub Actions so it doesn't depend on my laptop being on.
+cheap keyword pre-filter, then sends the shortlist to Gemini (free tier) to
+actually read each job description against my resume and decide real fit —
+not just keyword overlap. Logs new matches to a Google Sheet and emails me
+the digest. Runs on GitHub Actions so it doesn't depend on my laptop being on.
 
 ## How it fits together
 
@@ -21,7 +21,7 @@ keyword pre-filter (cheap) — cuts hundreds of listings down to ~60 candidates
         ↓
 dedup against Google Sheet — drop anything already logged before
         ↓
-Claude API reads each remaining JD against my actual resume/profile,
+Gemini API reads each remaining JD against my actual resume/profile,
 scores genuine fit 0-100, rejects unpaid internships and roles that
 need real professional experience
         ↓
@@ -40,8 +40,9 @@ email the digest via Gmail API
   right now.
 - Internshala's HTML structure can change without notice, which would break
   the scraper silently — watch the Action logs occasionally.
-- The Claude review step calls the API once per shortlisted job (up to 60
-  calls/run) — costs a small amount per run, not free.
+- The Gemini review step calls the API once per shortlisted job (up to 40
+  calls/run, paced ~4.5s apart to respect free-tier rate limits) — this is
+  free but means a run can take several minutes.
 
 ## One-time setup
 
@@ -78,9 +79,10 @@ print("client_secret:", creds.client_secret)
 
 Keep the three printed values — they go into GitHub secrets below.
 
-### 4. Anthropic API key (for the real resume-matching step)
-1. Go to https://console.anthropic.com → API Keys → Create Key.
-2. Copy the key (starts with `sk-ant-...`).
+### 4. Gemini API key (for the real resume-matching step, free tier)
+1. Go to https://aistudio.google.com/apikey → Create API Key.
+2. No credit card required — this is a genuine free tier, not a trial.
+3. Copy the key (starts with `AIza...`).
 
 ### 5. GitHub repo secrets
 Repo → Settings → Secrets and variables → Actions → New repository secret:
@@ -93,7 +95,7 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `GMAIL_CLIENT_SECRET` | from step 3 |
 | `GMAIL_REFRESH_TOKEN` | from step 3 |
 | `ALERT_EMAIL_TO` | rahulkumarshc00@gmail.com |
-| `ANTHROPIC_API_KEY` | from step 4 |
+| `GEMINI_API_KEY` | from step 4 |
 
 ### 6. Push and test
 Push this repo to GitHub, then go to Actions → Daily Job Alert → Run workflow
@@ -103,11 +105,13 @@ to trigger it manually and confirm it works before waiting for the 8 AM cron.
 
 - `SEARCH_TERMS`, `LOCATIONS`, `PROFILE_KEYWORDS`, `PRIORITY_COMPANIES`,
   `INTERNSHALA_SEARCH_TERMS` are all at the top of `job_search.py`.
-- `CANDIDATE_PROFILE` is the text block Claude actually reads to judge fit —
+- `CANDIDATE_PROFILE` is the text block Gemini actually reads to judge fit —
   keep this in sync with `profile-data.json` from the resume-portfolio-sync
   skill whenever the resume changes.
-- `LLM_FIT_THRESHOLD` (currently 60) controls how strict Claude's review is.
+- `LLM_FIT_THRESHOLD` (currently 60) controls how strict Gemini's review is.
   Raise it if the digest is too noisy, lower it if too sparse.
-- `MAX_LLM_CANDIDATES` (currently 60) caps how many jobs get sent to Claude
-  per run, to bound API cost even on a high-volume day.
+- `MAX_LLM_CANDIDATES` (currently 40) caps how many jobs get sent to Gemini
+  per run — kept conservative to stay within free-tier rate limits (roughly
+  15 requests/minute on Flash-Lite). The script paces calls 4.5s apart to
+  avoid 429 errors; raising the candidate cap will make the run take longer.
 
