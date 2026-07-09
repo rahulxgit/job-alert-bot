@@ -1,9 +1,11 @@
 """
 Daily job alert bot.
 
-Pulls fresher/SDE-1 listings from Indeed, LinkedIn and Naukri (via jobspy),
-scores each one against my profile, mails the top matches, and logs
-everything to a Google Sheet so I don't get the same listing twice.
+Pulls fresher/SDE-1 listings from Indeed, LinkedIn and Google Jobs (via jobspy;
+Google Jobs surfaces Naukri/Foundit postings too since this jobspy version
+doesn't support Naukri directly), scores each one against my profile, mails
+the top matches, and logs everything to a Google Sheet so I don't get the
+same listing twice.
 
 Run manually with:  python job_search.py
 Runs automatically every day at 8 AM IST via .github/workflows/job-alerts.yml
@@ -34,7 +36,7 @@ SEARCH_TERMS = [
 
 LOCATIONS = ["Bengaluru, India", "India"]
 
-SITES = ["indeed", "linkedin"]
+SITES = ["indeed", "linkedin", "google"]
 
 RESULTS_PER_SITE = 30
 HOURS_OLD = 24  # only look at listings posted in the last day
@@ -43,9 +45,26 @@ HOURS_OLD = 24  # only look at listings posted in the last day
 PROFILE_KEYWORDS = [
     "react", "next.js", "nextjs", "node", "express", "typescript", "javascript",
     "mongodb", "postgresql", "prisma", "mysql", "supabase", "firebase",
-    "rest api", "mern", "full stack", "fullstack", "sde", "fresher",
-    "0-2 years", "0-1 years", "entry level", "graduate", "ai agents",
-    "rag", "llm", "docker", "git", "ci/cd", "python", "java",
+    "rest api", "mern", "full stack", "fullstack", "ai agents",
+    "rag", "llm", "mcp", "docker", "git", "ci/cd", "python", "java", "c++",
+]
+
+# Terms that signal an actual fresher/SDE-1 opening — these matter more
+# than generic tech-stack overlap, since a 10-year Staff Engineer role
+# mentioning "React" shouldn't outrank an entry-level opening.
+FRESHER_SIGNALS = [
+    "sde 1", "sde-1", "sde i", "software development engineer i",
+    "fresher", "0-1 year", "0-2 year", "0 - 2 year", "0-2 yrs",
+    "entry level", "entry-level", "graduate engineer", "graduate trainee",
+    "junior", "campus hire", "new grad",
+]
+
+# Title/description terms that signal this is NOT an entry-level role —
+# heavily penalized regardless of tech-stack overlap.
+SENIORITY_EXCLUSIONS = [
+    "senior", "sr.", "sr ", "staff", "principal", "lead", "architect",
+    "manager", "director", "head of", "vp ", "9-12 yr", "6-9 yr", "5-8 yr",
+    "8+ year", "10+ year", "7+ year", "6+ year", "5+ year", "4+ year",
 ]
 
 # Companies I'm specifically targeting
@@ -72,6 +91,7 @@ def fetch_jobs() -> pd.DataFrame:
                 df = scrape_jobs(
                     site_name=SITES,
                     search_term=term,
+                    google_search_term=f"{term} jobs near {location}",
                     location=location,
                     results_wanted=RESULTS_PER_SITE,
                     hours_old=HOURS_OLD,
@@ -91,11 +111,30 @@ def fetch_jobs() -> pd.DataFrame:
 
 
 def score_job(row: pd.Series) -> int:
-    text = f"{row.get('title', '')} {row.get('description', '')} {row.get('company', '')}".lower()
-    score = sum(kw in text for kw in PROFILE_KEYWORDS)
-    if any(company in text for company in PRIORITY_COMPANIES):
-        score += 5
-    return score
+    title = str(row.get("title", "") or "").lower()
+    description = str(row.get("description", "") or "").lower()
+    company = str(row.get("company", "") or "").lower()
+    full_text = f"{title} {description} {company}"
+
+    # Hard exclude: senior-level roles get knocked out regardless of stack match.
+    # Title matches count double since that's the strongest signal of seniority.
+    seniority_hits = sum(term in title for term in SENIORITY_EXCLUSIONS) * 2
+    seniority_hits += sum(term in description for term in SENIORITY_EXCLUSIONS)
+    if seniority_hits >= 2:
+        return 0
+
+    score = 0
+    # Fresher/entry-level signals matter most — this is the actual target role
+    score += sum(sig in full_text for sig in FRESHER_SIGNALS) * 4
+    # Tech-stack overlap is secondary — nice to have, not the deciding factor
+    score += sum(kw in full_text for kw in PROFILE_KEYWORDS)
+    # Small bonus for companies I'm specifically targeting
+    if any(comp in full_text for comp in PRIORITY_COMPANIES):
+        score += 3
+    # Light penalty if a senior term shows up even once, without disqualifying
+    score -= seniority_hits
+
+    return max(score, 0)
 
 
 def filter_and_rank(df: pd.DataFrame, min_score: int = 3) -> pd.DataFrame:
