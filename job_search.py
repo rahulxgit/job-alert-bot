@@ -101,8 +101,9 @@ def score_job(row: pd.Series) -> int:
 def filter_and_rank(df: pd.DataFrame, min_score: int = 3) -> pd.DataFrame:
     if df.empty:
         return df
+    df = df.copy()
     df["match_score"] = df.apply(score_job, axis=1)
-    df = df[df["match_score"] >= min_score]
+    df = df[df["match_score"] >= min_score].copy()
     df.sort_values("match_score", ascending=False, inplace=True)
     return df
 
@@ -130,11 +131,11 @@ def log_new_jobs(sheet, df: pd.DataFrame):
         return
     rows = [
         [
-            row.get("job_url", ""),
-            row.get("title", ""),
-            row.get("company", ""),
-            row.get("location", ""),
-            row.get("match_score", ""),
+            str(row.get("job_url") or ""),
+            str(row.get("title") or ""),
+            str(row.get("company") or ""),
+            str(row.get("location") or ""),
+            int(row.get("match_score") or 0),
             datetime.now().strftime("%Y-%m-%d %H:%M"),
         ]
         for _, row in df.iterrows()
