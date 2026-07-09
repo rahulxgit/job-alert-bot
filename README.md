@@ -1,9 +1,10 @@
 # Job Alert Bot
 
-Scrapes Indeed, LinkedIn and Naukri every morning, filters for SDE-1 / full-stack
-roles that actually match my profile, logs new ones to a Google Sheet, and
-emails me a digest. Runs on GitHub Actions so it doesn't depend on my laptop
-being on.
+Scrapes Indeed, LinkedIn, Google Jobs and Internshala every morning, runs a
+cheap keyword pre-filter, then sends the shortlist to Claude to actually read
+each job description against my resume and decide real fit — not just
+keyword overlap. Logs new matches to a Google Sheet and emails me the digest.
+Runs on GitHub Actions so it doesn't depend on my laptop being on.
 
 ## How it fits together
 
@@ -12,22 +13,41 @@ GitHub Actions (cron, 8 AM IST)
         ↓
 job_search.py
         ↓
-jobspy scrapes Indeed + LinkedIn + Naukri
+jobspy scrapes Indeed + LinkedIn + Google Jobs
+        +
+custom scraper pulls paid internships from Internshala
         ↓
-score against my resume keywords, drop anything below threshold
+keyword pre-filter (cheap) — cuts hundreds of listings down to ~60 candidates
         ↓
-check Google Sheet for URLs already logged (dedup)
+dedup against Google Sheet — drop anything already logged before
         ↓
-append new rows to the Sheet
+Claude API reads each remaining JD against my actual resume/profile,
+scores genuine fit 0-100, rejects unpaid internships and roles that
+need real professional experience
         ↓
-email the new matches via Gmail API
+log the survivors to the Sheet
+        ↓
+email the digest via Gmail API
 ```
+
+## Known limitations (be aware of these)
+
+- **Wellfound and Y Combinator's job board (Work at a Startup) are not
+  included.** Both require a logged-in session and JS rendering to browse —
+  they can't be reliably scraped by a headless script the way Indeed/LinkedIn
+  can. If you want startup-specific listings, Internshala and the Google Jobs
+  aggregator (which pulls from many boards) are the closest reliable proxies
+  right now.
+- Internshala's HTML structure can change without notice, which would break
+  the scraper silently — watch the Action logs occasionally.
+- The Claude review step calls the API once per shortlisted job (up to 60
+  calls/run) — costs a small amount per run, not free.
 
 ## One-time setup
 
 ### 1. Google Sheet
 Create a sheet called "Job Search Tracker" with a header row:
-`URL | Title | Company | Location | Score | Date Added`
+`URL | Title | Company | Location | Fit Score | Reason | Date Added`
 Copy the sheet ID from the URL (the long string between `/d/` and `/edit`).
 
 ### 2. Google Service Account (for Sheets access)
@@ -58,7 +78,11 @@ print("client_secret:", creds.client_secret)
 
 Keep the three printed values — they go into GitHub secrets below.
 
-### 4. GitHub repo secrets
+### 4. Anthropic API key (for the real resume-matching step)
+1. Go to https://console.anthropic.com → API Keys → Create Key.
+2. Copy the key (starts with `sk-ant-...`).
+
+### 5. GitHub repo secrets
 Repo → Settings → Secrets and variables → Actions → New repository secret:
 
 | Secret name | Value |
@@ -69,21 +93,21 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `GMAIL_CLIENT_SECRET` | from step 3 |
 | `GMAIL_REFRESH_TOKEN` | from step 3 |
 | `ALERT_EMAIL_TO` | rahulkumarshc00@gmail.com |
+| `ANTHROPIC_API_KEY` | from step 4 |
 
-### 5. Push and test
+### 6. Push and test
 Push this repo to GitHub, then go to Actions → Daily Job Alert → Run workflow
 to trigger it manually and confirm it works before waiting for the 8 AM cron.
 
 ## Tuning
 
-- `SEARCH_TERMS`, `LOCATIONS`, `PROFILE_KEYWORDS`, `PRIORITY_COMPANIES` are
-  all at the top of `job_search.py` — edit directly as the search evolves.
-- `min_score` in `filter_and_rank()` controls how strict the matching is.
-  Start at 3, raise it if the digest is too noisy.
+- `SEARCH_TERMS`, `LOCATIONS`, `PROFILE_KEYWORDS`, `PRIORITY_COMPANIES`,
+  `INTERNSHALA_SEARCH_TERMS` are all at the top of `job_search.py`.
+- `CANDIDATE_PROFILE` is the text block Claude actually reads to judge fit —
+  keep this in sync with `profile-data.json` from the resume-portfolio-sync
+  skill whenever the resume changes.
+- `LLM_FIT_THRESHOLD` (currently 60) controls how strict Claude's review is.
+  Raise it if the digest is too noisy, lower it if too sparse.
+- `MAX_LLM_CANDIDATES` (currently 60) caps how many jobs get sent to Claude
+  per run, to bound API cost even on a high-volume day.
 
-## Known limitations
-
-- LinkedIn scraping through jobspy is rate-limited and occasionally blocked —
-  the script just logs a warning and moves on if one site fails.
-- Naukri listings sometimes lack full descriptions, which can undercount the
-  keyword score for otherwise good matches.

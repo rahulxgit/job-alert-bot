@@ -1,30 +1,35 @@
 """
 Daily job alert bot.
 
-Pulls fresher/SDE-1 listings from Indeed, LinkedIn and Google Jobs (via jobspy;
-Google Jobs surfaces Naukri/Foundit postings too since this jobspy version
-doesn't support Naukri directly), scores each one against my profile, mails
-the top matches, and logs everything to a Google Sheet so I don't get the
-same listing twice.
+Pulls fresher/SDE-1 listings from Indeed, LinkedIn, Google Jobs (via jobspy)
+and Internshala (paid internships only), runs a cheap keyword pre-filter to
+cut the list down, then sends the survivors to the Claude API to actually
+read each job description against my resume and decide real fit — not just
+keyword overlap. Logs matches to a Google Sheet so I don't see repeats, and
+emails me the digest.
 
 Run manually with:  python job_search.py
 Runs automatically every day at 8 AM IST via .github/workflows/job-alerts.yml
 """
 
 import base64
+import json
 import os
-from datetime import datetime, timedelta
+import time
+from datetime import datetime
 from email.mime.text import MIMEText
 
 import gspread
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
 from google.oauth2.credentials import Credentials
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from googleapiclient.discovery import build
 from jobspy import scrape_jobs
 
 # ---------------------------------------------------------------------------
-# Config — tweak these as the search evolves
+# Config
 # ---------------------------------------------------------------------------
 
 SEARCH_TERMS = [
@@ -35,13 +40,13 @@ SEARCH_TERMS = [
 ]
 
 LOCATIONS = ["Bengaluru, India", "India"]
-
 SITES = ["indeed", "linkedin", "google"]
-
 RESULTS_PER_SITE = 30
-HOURS_OLD = 24  # only look at listings posted in the last day
+HOURS_OLD = 24
 
-# Keywords pulled from my resume/tech stack — used to score relevance
+INTERNSHALA_SEARCH_TERMS = ["full-stack-development", "software-development", "web-development"]
+
+# Pre-filter keywords — cheap first pass to shrink the list before paying for LLM calls
 PROFILE_KEYWORDS = [
     "react", "next.js", "nextjs", "node", "express", "typescript", "javascript",
     "mongodb", "postgresql", "prisma", "mysql", "supabase", "firebase",
@@ -49,41 +54,77 @@ PROFILE_KEYWORDS = [
     "rag", "llm", "mcp", "docker", "git", "ci/cd", "python", "java", "c++",
 ]
 
-# Terms that signal an actual fresher/SDE-1 opening — these matter more
-# than generic tech-stack overlap, since a 10-year Staff Engineer role
-# mentioning "React" shouldn't outrank an entry-level opening.
 FRESHER_SIGNALS = [
     "sde 1", "sde-1", "sde i", "software development engineer i",
     "fresher", "0-1 year", "0-2 year", "0 - 2 year", "0-2 yrs",
     "entry level", "entry-level", "graduate engineer", "graduate trainee",
-    "junior", "campus hire", "new grad",
+    "junior", "campus hire", "new grad", "intern",
 ]
 
-# Title/description terms that signal this is NOT an entry-level role —
-# heavily penalized regardless of tech-stack overlap.
 SENIORITY_EXCLUSIONS = [
     "senior", "sr.", "sr ", "staff", "principal", "lead", "architect",
     "manager", "director", "head of", "vp ", "9-12 yr", "6-9 yr", "5-8 yr",
     "8+ year", "10+ year", "7+ year", "6+ year", "5+ year", "4+ year",
 ]
 
-# Companies I'm specifically targeting
 PRIORITY_COMPANIES = [
     "razorpay", "sarvam", "groww", "meesho", "zepto", "cred", "swiggy",
     "zomato", "flipkart", "postman", "browserstack", "freshworks",
 ]
 
-SHEET_NAME = "Job Search Tracker"
+# How many pre-filtered candidates to actually send to the LLM per run —
+# caps API spend even on a day with a huge raw pull
+MAX_LLM_CANDIDATES = 60
+LLM_FIT_THRESHOLD = 60  # 0-100 scale; only keep jobs Claude scores at or above this
+
 SHEET_ID = os.environ["GOOGLE_SHEET_ID"]
-
 GMAIL_TO = os.environ["ALERT_EMAIL_TO"]
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+
+# My actual background — this is what the LLM checks each job against.
+# Keep this in sync with resume-portfolio-sync's profile-data.json.
+CANDIDATE_PROFILE = """
+Rahul Kumar — final-year B.Tech CSE student, NIT Raipur (2022-2026), CGPA 8.67.
+Targeting: SDE-1 / Junior Software Engineer roles, and paid internships, at
+Indian product companies, AI-first startups, and funded companies, preferably Bengaluru.
+
+Experience: SDE Intern at Bluestock Fintech (Feb-Mar 2026, remote). Built and shipped
+three production projects: Logic Looper (client-first daily puzzle platform — React,
+Redux Toolkit, IndexedDB, Node.js, Express, PostgreSQL/Prisma, ~70% reduction in API
+calls, ~60% server load reduction via CDN-first ISR, 500+ concurrent users, 100%
+offline capable), an open-source AI Profile Picture Maker, and The Corporate Blog.
+
+Key projects:
+- DriveClone: MERN Google Drive clone with a native MCP server letting AI agents
+  interact with the drive directly — JWT auth, Cloudinary storage, deployed on
+  Render/Vercel. Strongest AI-engineering differentiator.
+- AI Inference Playground: React/TypeScript LLM inference playground with token
+  streaming, live latency metrics, WCAG AA accessibility, custom diff viewer.
+- Smart Bookmark App: Next.js + Supabase, SSR auth, layered architecture.
+- Realtime Gallery: React + Zustand + InstantDB, real-time multi-user sync.
+
+Tech stack: JavaScript, TypeScript, Java, Python, C++, SQL, React, Next.js,
+Redux, Node.js, Express, MongoDB, PostgreSQL, MySQL, Prisma, Supabase, Firebase,
+REST APIs, MCP servers, RAG pipelines, Claude/OpenAI API integration, Docker,
+Git, GitHub Actions, Vercel, Render.
+
+Achievements: 500+ DSA problems solved (LeetCode rating 1800+), 99.41 percentile
+Naukri Young Turks 2025, TCS CodeVita Season 13 rank ~8,552. Leadership: Sponsorship
+& Outreach Lead at NIT Raipur Innovation Cell, Technical Events Coordinator at
+Robotics Club, co-organized a 200+ participant national hackathon.
+
+Strongest positioning: the AI-engineering layer (MCP servers, RAG, LLM API
+integrations) that's usually missing from a typical MERN-fresher profile.
+NOT a fit for: senior/staff/lead/principal roles, roles requiring 3+ years
+of professional experience, unpaid internships.
+"""
 
 
 # ---------------------------------------------------------------------------
-# Scraping + scoring
+# Sources — jobspy sites
 # ---------------------------------------------------------------------------
 
-def fetch_jobs() -> pd.DataFrame:
+def fetch_jobspy_listings() -> pd.DataFrame:
     all_results = []
     for term in SEARCH_TERMS:
         for location in LOCATIONS:
@@ -107,44 +148,170 @@ def fetch_jobs() -> pd.DataFrame:
         return pd.DataFrame()
 
     combined = pd.concat(all_results, ignore_index=True)
-    combined.drop_duplicates(subset=["job_url"], inplace=True)
-    return combined
+    return combined[["job_url", "title", "company", "location", "description"]]
 
 
-def score_job(row: pd.Series) -> int:
+# ---------------------------------------------------------------------------
+# Source — Internshala (paid internships)
+# ---------------------------------------------------------------------------
+
+def fetch_internshala_listings() -> pd.DataFrame:
+    """
+    Internshala's search pages are plain server-rendered HTML, so a simple
+    request + BeautifulSoup parse works without a browser. We only keep
+    listings that explicitly show a paid stipend — unpaid internships are
+    dropped right here before anything else touches them.
+    """
+    rows = []
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+    for term in INTERNSHALA_SEARCH_TERMS:
+        url = f"https://internshala.com/internships/{term}-internship-in-bangalore/"
+        try:
+            resp = requests.get(url, headers=headers, timeout=15)
+            resp.raise_for_status()
+        except Exception as exc:
+            print(f"[warn] internshala fetch failed for '{term}': {exc}")
+            continue
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        cards = soup.select("div.individual_internship")
+
+        for card in cards:
+            title_el = card.select_one("h3.job-internship-name a")
+            company_el = card.select_one("p.company-name")
+            stipend_el = card.select_one("span.stipend")
+            location_el = card.select_one("a.location_link")
+
+            if not title_el:
+                continue
+
+            stipend_text = stipend_el.get_text(strip=True) if stipend_el else ""
+            # Internshala marks unpaid ones explicitly — skip those outright
+            if "unpaid" in stipend_text.lower():
+                continue
+
+            link = title_el.get("href", "")
+            full_url = f"https://internshala.com{link}" if link.startswith("/") else link
+
+            rows.append({
+                "job_url": full_url,
+                "title": title_el.get_text(strip=True),
+                "company": company_el.get_text(strip=True) if company_el else "",
+                "location": location_el.get_text(strip=True) if location_el else "India",
+                "description": f"Internship. Stipend: {stipend_text}",
+            })
+
+        time.sleep(1)  # be polite between requests
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Stage 1 — cheap keyword pre-filter (shrinks the list before paying for LLM calls)
+# ---------------------------------------------------------------------------
+
+def keyword_prefilter_score(row: pd.Series) -> int:
     title = str(row.get("title", "") or "").lower()
     description = str(row.get("description", "") or "").lower()
     company = str(row.get("company", "") or "").lower()
     full_text = f"{title} {description} {company}"
 
-    # Hard exclude: senior-level roles get knocked out regardless of stack match.
-    # Title matches count double since that's the strongest signal of seniority.
     seniority_hits = sum(term in title for term in SENIORITY_EXCLUSIONS) * 2
     seniority_hits += sum(term in description for term in SENIORITY_EXCLUSIONS)
     if seniority_hits >= 2:
         return 0
 
     score = 0
-    # Fresher/entry-level signals matter most — this is the actual target role
     score += sum(sig in full_text for sig in FRESHER_SIGNALS) * 4
-    # Tech-stack overlap is secondary — nice to have, not the deciding factor
     score += sum(kw in full_text for kw in PROFILE_KEYWORDS)
-    # Small bonus for companies I'm specifically targeting
     if any(comp in full_text for comp in PRIORITY_COMPANIES):
         score += 3
-    # Light penalty if a senior term shows up even once, without disqualifying
     score -= seniority_hits
-
     return max(score, 0)
 
 
-def filter_and_rank(df: pd.DataFrame, min_score: int = 3) -> pd.DataFrame:
+def prefilter(df: pd.DataFrame, min_score: int = 3) -> pd.DataFrame:
     if df.empty:
         return df
     df = df.copy()
-    df["match_score"] = df.apply(score_job, axis=1)
-    df = df[df["match_score"] >= min_score].copy()
-    df.sort_values("match_score", ascending=False, inplace=True)
+    df["prefilter_score"] = df.apply(keyword_prefilter_score, axis=1)
+    df = df[df["prefilter_score"] >= min_score].copy()
+    df.sort_values("prefilter_score", ascending=False, inplace=True)
+    return df.head(MAX_LLM_CANDIDATES)
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 — Claude reads each JD against my actual resume/profile
+# ---------------------------------------------------------------------------
+
+def llm_evaluate_job(title: str, company: str, description: str) -> dict:
+    """
+    Returns {"fit_score": int 0-100, "is_fresher_appropriate": bool, "reason": str}
+    Falls back to a safe "skip" result if the API call fails, so one bad
+    call doesn't crash the whole run.
+    """
+    prompt = f"""Here is a candidate's background:
+
+{CANDIDATE_PROFILE}
+
+Here is a job listing:
+Title: {title}
+Company: {company}
+Description: {description[:3000]}
+
+Judge whether this specific listing is a genuinely good fit for this candidate
+— a fresher/final-year student — not just whether the tech stack overlaps.
+Reject roles that need real professional experience even if titled "SDE 1" or
+similar, and reject unpaid internships. Respond with ONLY a JSON object, no
+other text, in this exact shape:
+{{"fit_score": <0-100 integer>, "is_fresher_appropriate": <true/false>, "reason": "<one sentence>"}}"""
+
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 200,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        text = resp.json()["content"][0]["text"].strip()
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        return json.loads(text)
+    except Exception as exc:
+        print(f"[warn] LLM evaluation failed for '{title}' @ '{company}': {exc}")
+        return {"fit_score": 0, "is_fresher_appropriate": False, "reason": "evaluation failed"}
+
+
+def llm_filter(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    results = []
+    for _, row in df.iterrows():
+        verdict = llm_evaluate_job(
+            str(row.get("title", "")),
+            str(row.get("company", "")),
+            str(row.get("description", "")),
+        )
+        results.append(verdict)
+        time.sleep(0.3)  # light throttling
+
+    df = df.copy()
+    df["fit_score"] = [r["fit_score"] for r in results]
+    df["fresher_appropriate"] = [r["is_fresher_appropriate"] for r in results]
+    df["reason"] = [r["reason"] for r in results]
+
+    df = df[(df["fit_score"] >= LLM_FIT_THRESHOLD) & (df["fresher_appropriate"])].copy()
+    df.sort_values("fit_score", ascending=False, inplace=True)
     return df
 
 
@@ -154,7 +321,7 @@ def filter_and_rank(df: pd.DataFrame, min_score: int = 3) -> pd.DataFrame:
 
 def get_sheet():
     creds = ServiceAccountCredentials.from_service_account_info(
-        eval(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]),
+        json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]),
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
     client = gspread.authorize(creds)
@@ -163,7 +330,7 @@ def get_sheet():
 
 def get_seen_urls(sheet) -> set:
     urls = sheet.col_values(1)
-    return set(urls[1:])  # skip header row
+    return set(urls[1:])
 
 
 def log_new_jobs(sheet, df: pd.DataFrame):
@@ -175,7 +342,8 @@ def log_new_jobs(sheet, df: pd.DataFrame):
             str(row.get("title") or ""),
             str(row.get("company") or ""),
             str(row.get("location") or ""),
-            int(row.get("match_score") or 0),
+            int(row.get("fit_score") or 0),
+            str(row.get("reason") or ""),
             datetime.now().strftime("%Y-%m-%d %H:%M"),
         ]
         for _, row in df.iterrows()
@@ -203,11 +371,12 @@ def build_email_body(df: pd.DataFrame) -> str:
     if df.empty:
         return "No new matching listings today."
 
-    lines = [f"{len(df)} new job(s) matched today:\n"]
+    lines = [f"{len(df)} new job(s) matched today (Claude-reviewed):\n"]
     for _, row in df.iterrows():
         lines.append(
-            f"- {row.get('title')} @ {row.get('company')} "
-            f"({row.get('location')}) — score {row.get('match_score')}\n"
+            f"- {row.get('title')} @ {row.get('company')} ({row.get('location')}) "
+            f"— fit {row.get('fit_score')}/100\n"
+            f"  Why: {row.get('reason')}\n"
             f"  {row.get('job_url')}\n"
         )
     return "\n".join(lines)
@@ -227,27 +396,42 @@ def send_email(service, body: str, job_count: int):
 # ---------------------------------------------------------------------------
 
 def main():
-    print("Fetching jobs...")
-    raw_jobs = fetch_jobs()
-    print(f"Pulled {len(raw_jobs)} raw listings")
+    print("Fetching jobs from Indeed/LinkedIn/Google...")
+    jobspy_df = fetch_jobspy_listings()
+    print(f"  {len(jobspy_df)} listings")
 
-    ranked = filter_and_rank(raw_jobs)
-    print(f"{len(ranked)} listings passed the relevance filter")
+    print("Fetching paid internships from Internshala...")
+    internshala_df = fetch_internshala_listings()
+    print(f"  {len(internshala_df)} listings")
 
-    if ranked.empty:
-        print("No listings matched today — nothing to log or email.")
+    raw_jobs = pd.concat([jobspy_df, internshala_df], ignore_index=True)
+    raw_jobs.drop_duplicates(subset=["job_url"], inplace=True)
+    print(f"Pulled {len(raw_jobs)} raw listings total")
+
+    shortlist = prefilter(raw_jobs)
+    print(f"{len(shortlist)} passed the keyword pre-filter (sent to Claude for review)")
+
+    if shortlist.empty:
+        print("Nothing to review — no matches today.")
         return
 
     sheet = get_sheet()
     seen = get_seen_urls(sheet)
-    new_jobs = ranked[~ranked["job_url"].isin(seen)]
-    print(f"{len(new_jobs)} of those are new")
+    unseen_shortlist = shortlist[~shortlist["job_url"].isin(seen)]
+    print(f"{len(unseen_shortlist)} of those are new (not already logged)")
 
-    log_new_jobs(sheet, new_jobs)
+    if unseen_shortlist.empty:
+        print("Everything in the shortlist was already logged before — nothing new to review.")
+        return
+
+    reviewed = llm_filter(unseen_shortlist)
+    print(f"{len(reviewed)} passed Claude's fit review (score >= {LLM_FIT_THRESHOLD})")
+
+    log_new_jobs(sheet, reviewed)
 
     gmail = get_gmail_service()
-    body = build_email_body(new_jobs)
-    send_email(gmail, body, len(new_jobs))
+    body = build_email_body(reviewed)
+    send_email(gmail, body, len(reviewed))
     print("Email sent.")
 
 
