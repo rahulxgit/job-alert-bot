@@ -96,6 +96,7 @@ def fetch_jobs() -> pd.DataFrame:
                     results_wanted=RESULTS_PER_SITE,
                     hours_old=HOURS_OLD,
                     country_indeed="India",
+                    linkedin_fetch_description=True,
                 )
                 if df is not None and not df.empty:
                     all_results.append(df)
