@@ -1,11 +1,11 @@
 # Job Alert Bot
 
-Scrapes Indeed, LinkedIn, Google Jobs, Internshala, and Naukri every
-morning, runs a cheap keyword pre-filter, then sends the shortlist to
-Gemini (free tier) to actually read each job description against my resume
-and decide real fit — not just keyword overlap. Logs new matches to a
-Google Sheet and emails me the digest. Runs on GitHub Actions so it doesn't
-depend on my laptop being on.
+Scrapes Indeed, LinkedIn, Google Jobs, Internshala, Naukri, and (best-effort)
+Wellfound every morning, runs a cheap keyword pre-filter, then sends the
+shortlist to Gemini (free tier) to actually read each job description
+against my resume and decide real fit — not just keyword overlap. Logs new
+matches to a Google Sheet and emails me the digest. Runs on GitHub Actions
+so it doesn't depend on my laptop being on.
 
 ## How it fits together
 
@@ -19,6 +19,9 @@ jobspy scrapes Indeed + LinkedIn + Google Jobs
 custom scraper pulls paid internships from Internshala
         +
 custom scraper hits Naukri's internal search API directly
+        +
+custom scraper attempts Wellfound (best-effort, often returns nothing —
+Wellfound actively blocks scrapers, see limitations below)
         ↓
 keyword pre-filter (cheap) — cuts hundreds of listings down to ~40 candidates
         ↓
@@ -35,20 +38,28 @@ email the digest via Gmail API
 
 ## Known limitations (be aware of these)
 
-- **Wellfound and Y Combinator's job board (Work at a Startup) are not
-  included.** Both require a logged-in session and JS rendering to browse —
-  they can't be reliably scraped by a headless script the way Indeed/LinkedIn
-  can. If you want startup-specific listings, Internshala and the Google Jobs
-  aggregator (which pulls from many boards) are the closest reliable proxies
-  right now.
+- **Wellfound is best-effort and frequently returns 0 listings — this is
+  expected, not a bug.** Wellfound protects its job listings with
+  DataDome/Cloudflare anti-bot systems specifically to block scrapers, and
+  their own scraping vendors note the site often requires a logged-in
+  session to browse listings at all. The scraper tries to read Wellfound's
+  embedded Next.js page data (`__NEXT_DATA__`) without logging in, which
+  sometimes works and often doesn't depending on whether DataDome flags the
+  request. Making this reliable would require a paid residential-proxy or
+  anti-bot-bypass service (e.g. ScrapFly, Apify) — a real cost, not a code
+  fix. If Wellfound consistently returns 0, that's the anti-bot wall, not
+  something to debug in the script.
+- **Y Combinator's "Work at a Startup" job board is not included at all**
+  (not even best-effort) — it requires a logged-in session to browse
+  listings in the first place, so there's no public page to even attempt.
 - Internshala's HTML structure can change without notice, which would break
   the scraper silently — watch the Action logs occasionally.
-- **Naukri is the most fragile source.** It's pulled via an internal search
-  API (`naukri.com/jobapi/v3/search`) that their own site uses but isn't
-  officially documented or supported — Naukri can change required headers,
-  rate-limit harder, or restructure the response at any time without notice.
-  If Naukri listings suddenly drop to zero in the logs, this is the first
-  place to check.
+- **Naukri is the second most fragile source.** It's pulled via an internal
+  search API (`naukri.com/jobapi/v3/search`) that their own site uses but
+  isn't officially documented or supported — Naukri can change required
+  headers, rate-limit harder, or restructure the response at any time
+  without notice. If Naukri listings suddenly drop to zero in the logs,
+  this is the first place to check.
 - The Gemini review step calls the API once per shortlisted job (up to 40
   calls/run, paced ~4.5s apart to respect free-tier rate limits) — this is
   free but means a run can take several minutes.

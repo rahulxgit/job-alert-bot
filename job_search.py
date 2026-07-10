@@ -2,11 +2,13 @@
 Daily job alert bot.
 
 Pulls fresher/SDE-1 listings from Indeed, LinkedIn, Google Jobs (via jobspy),
-Internshala (paid internships only), and Naukri (via their internal search
-API), runs a cheap keyword pre-filter to cut the list down, then sends the
-survivors to the Gemini API to actually read each job description against
-my resume and decide real fit — not just keyword overlap. Logs matches to a
-Google Sheet so I don't see repeats, and emails me the digest.
+Internshala (paid internships only), Naukri (via their internal search API),
+and Wellfound (best-effort — Wellfound actively blocks scrapers, so this
+one frequently returns nothing; see README), runs a cheap keyword pre-filter
+to cut the list down, then sends the survivors to the Gemini API to actually
+read each job description against my resume and decide real fit — not just
+keyword overlap. Logs matches to a Google Sheet so I don't see repeats, and
+emails me the digest.
 
 Run manually with:  python job_search.py
 Runs automatically every day at 8 AM IST via .github/workflows/job-alerts.yml
@@ -279,6 +281,88 @@ def fetch_naukri_listings() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Source — Wellfound (best-effort; Wellfound actively blocks scrapers with
+# DataDome/Cloudflare, so this frequently returns nothing — that's expected,
+# not a bug. See README for why this can't be made reliable without a paid
+# anti-bot/proxy service.)
+# ---------------------------------------------------------------------------
+
+WELLFOUND_ROLE_SLUGS = ["software-engineer", "full-stack-engineer", "backend-engineer"]
+
+
+def _find_job_like_dicts(node, found=None):
+    """
+    Recursively walks Wellfound's embedded __NEXT_DATA__ state looking for
+    anything that looks like a job listing. We don't hardcode exact key
+    paths here because Wellfound's internal schema isn't public and can
+    shift — instead we duck-type: any dict with a title-like field and a
+    slug/id gets treated as a candidate listing.
+    """
+    if found is None:
+        found = []
+    if isinstance(node, dict):
+        has_title = any(k in node for k in ("title", "jobTitle"))
+        has_identifier = any(k in node for k in ("slug", "jobListingSlug", "id"))
+        if has_title and has_identifier:
+            found.append(node)
+        for value in node.values():
+            _find_job_like_dicts(value, found)
+    elif isinstance(node, list):
+        for item in node:
+            _find_job_like_dicts(item, found)
+    return found
+
+
+def fetch_wellfound_listings() -> pd.DataFrame:
+    rows = []
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml",
+    }
+
+    for slug in WELLFOUND_ROLE_SLUGS:
+        url = f"https://wellfound.com/role/{slug}"
+        try:
+            resp = requests.get(url, headers=headers, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            script_tag = soup.find("script", id="__NEXT_DATA__")
+            if not script_tag or not script_tag.string:
+                print(f"[warn] wellfound '{slug}': no __NEXT_DATA__ found — likely blocked (DataDome/CAPTCHA)")
+                continue
+
+            state = json.loads(script_tag.string)
+            candidates = _find_job_like_dicts(state)
+
+            for job in candidates:
+                title = job.get("title") or job.get("jobTitle") or ""
+                slug_val = job.get("slug") or job.get("jobListingSlug") or job.get("id") or ""
+                if not title or not slug_val:
+                    continue
+                job_url = f"https://wellfound.com/jobs/{slug_val}" if not str(slug_val).startswith("http") else slug_val
+                rows.append({
+                    "job_url": job_url,
+                    "title": title,
+                    "company": job.get("companyName") or job.get("startupName") or "",
+                    "location": job.get("locationNames") or job.get("location") or "India",
+                    "description": job.get("description") or title,
+                })
+        except Exception as exc:
+            print(f"[warn] wellfound fetch failed for '{slug}': {exc}")
+            continue
+
+        time.sleep(1)
+
+    if not rows:
+        print("[info] Wellfound returned 0 listings this run — most likely blocked by anti-bot protection, not a code bug")
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
 # Stage 1 — cheap keyword pre-filter (shrinks the list before paying for LLM calls)
 # ---------------------------------------------------------------------------
 
@@ -480,7 +564,13 @@ def main():
     naukri_df = fetch_naukri_listings()
     print(f"  {len(naukri_df)} listings")
 
-    raw_jobs = pd.concat([jobspy_df, internshala_df, naukri_df], ignore_index=True)
+    print("Fetching jobs from Wellfound (best-effort, may return 0)...")
+    wellfound_df = fetch_wellfound_listings()
+    print(f"  {len(wellfound_df)} listings")
+
+    raw_jobs = pd.concat(
+        [jobspy_df, internshala_df, naukri_df, wellfound_df], ignore_index=True
+    )
     raw_jobs.drop_duplicates(subset=["job_url"], inplace=True)
     print(f"Pulled {len(raw_jobs)} raw listings total")
 
