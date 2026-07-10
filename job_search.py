@@ -1,12 +1,13 @@
 """
 Daily job alert bot.
 
-Pulls fresher/SDE-1 listings from Indeed, LinkedIn, Google Jobs (via jobspy),
-Internshala (paid internships only), Naukri (via their internal search API),
-and Wellfound (best-effort — Wellfound actively blocks scrapers, so this
-one frequently returns nothing; see README), runs a cheap keyword pre-filter
-to cut the list down, then sends the survivors to the Gemini API to actually
-read each job description against my resume and decide real fit — not just
+Pulls fresher/SDE-1 listings from Indeed, LinkedIn, Google Jobs, Glassdoor,
+and ZipRecruiter (via jobspy), Internshala (paid internships, all-India),
+Naukri (via their internal search API), Wellfound (best-effort), optional
+LinkedIn recruiter-post scraping (cookie-gated), and company career pages
+via Greenhouse/Lever public APIs. Runs a cheap keyword pre-filter to cut
+the list down, then sends the survivors to the Gemini API to actually read
+each job description against my resume and decide real fit — not just
 keyword overlap. Logs matches to a Google Sheet so I don't see repeats, and
 emails me the digest.
 
@@ -42,12 +43,31 @@ SEARCH_TERMS = [
 ]
 
 LOCATIONS = ["Bengaluru, India", "India"]
-SITES = ["indeed", "linkedin", "google"]
+SITES = ["indeed", "linkedin", "google", "glassdoor", "zip_recruiter"]
 RESULTS_PER_SITE = 30
 HOURS_OLD = 24
 
 INTERNSHALA_SEARCH_TERMS = ["full-stack-development", "software-development", "web-development"]
 NAUKRI_SEARCH_TERMS = ["sde 1", "software developer fresher", "full stack developer fresher"]
+
+# Company career pages via public ATS APIs — genuinely reliable (no anti-bot
+# fight, these are real documented/semi-documented public endpoints), unlike
+# Wellfound/Instahyre/Hirist. Only covers companies that use Greenhouse or
+# Lever as their ATS — many Indian product companies (Flipkart, Swiggy,
+# Zomato, etc.) run custom in-house career sites instead, which aren't
+# covered here. Add a company's board token once you've confirmed it —
+# wrong/missing tokens just return 0 results for that company, harmless.
+#
+# To find a token: visit job-boards.greenhouse.io/<token>/ or
+# jobs.lever.co/<token> directly — if the page loads, that's the token.
+GREENHOUSE_BOARDS = {
+    "postman": "postman",  # confirmed working
+    # "razorpay": "razorpay",   # unconfirmed — check before relying on it
+    # "cred": "cred",           # unconfirmed
+}
+LEVER_BOARDS = {
+    # "groww": "groww",         # unconfirmed — check before relying on it
+}
 
 # Pre-filter keywords — cheap first pass to shrink the list before paying for LLM calls
 PROFILE_KEYWORDS = [
@@ -77,7 +97,7 @@ PRIORITY_COMPANIES = [
 
 # How many pre-filtered candidates to actually send to the LLM per run —
 # caps API spend even on a day with a huge raw pull
-MAX_LLM_CANDIDATES = 40
+MAX_LLM_CANDIDATES = 55
 LLM_FIT_THRESHOLD = 60  # 0-100 scale; only keep jobs Gemini scores at or above this
 
 SHEET_ID = os.environ["GOOGLE_SHEET_ID"]
@@ -508,6 +528,73 @@ def fetch_linkedin_posts_listings() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Source — Company career pages, via public Greenhouse/Lever ATS APIs.
+# This is the most reliable of the newer sources — these are real,
+# semi-documented public JSON endpoints, not something fighting anti-bot
+# protection. Coverage is limited to whichever priority companies actually
+# use Greenhouse or Lever (see GREENHOUSE_BOARDS/LEVER_BOARDS above);
+# companies running custom in-house career sites aren't covered.
+# ---------------------------------------------------------------------------
+
+def fetch_greenhouse_listings() -> pd.DataFrame:
+    rows = []
+    for company_name, token in GREENHOUSE_BOARDS.items():
+        try:
+            resp = requests.get(
+                f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs",
+                params={"content": "true"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            print(f"[warn] greenhouse fetch failed for '{company_name}' (token '{token}'): {exc}")
+            continue
+
+        for job in data.get("jobs", []):
+            rows.append({
+                "job_url": job.get("absolute_url", ""),
+                "title": job.get("title", ""),
+                "company": company_name,
+                "location": job.get("location", {}).get("name", "India")
+                if isinstance(job.get("location"), dict) else "India",
+                "description": job.get("content", "") or job.get("title", ""),
+            })
+        time.sleep(1)
+
+    return pd.DataFrame(rows)
+
+
+def fetch_lever_listings() -> pd.DataFrame:
+    rows = []
+    for company_name, token in LEVER_BOARDS.items():
+        try:
+            resp = requests.get(
+                f"https://api.lever.co/v0/postings/{token}",
+                params={"mode": "json"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            print(f"[warn] lever fetch failed for '{company_name}' (token '{token}'): {exc}")
+            continue
+
+        for job in data:
+            rows.append({
+                "job_url": job.get("hostedUrl", ""),
+                "title": job.get("text", ""),
+                "company": company_name,
+                "location": job.get("categories", {}).get("location", "India")
+                if isinstance(job.get("categories"), dict) else "India",
+                "description": job.get("descriptionPlain", "") or job.get("text", ""),
+            })
+        time.sleep(1)
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
 # Stage 1 — cheap keyword pre-filter (shrinks the list before paying for LLM calls)
 # ---------------------------------------------------------------------------
 
@@ -717,8 +804,14 @@ def main():
     linkedin_posts_df = fetch_linkedin_posts_listings()
     print(f"  {len(linkedin_posts_df)} listings")
 
+    print("Fetching company career pages (Greenhouse + Lever)...")
+    greenhouse_df = fetch_greenhouse_listings()
+    lever_df = fetch_lever_listings()
+    print(f"  {len(greenhouse_df) + len(lever_df)} listings")
+
     raw_jobs = pd.concat(
-        [jobspy_df, internshala_df, naukri_df, wellfound_df, linkedin_posts_df],
+        [jobspy_df, internshala_df, naukri_df, wellfound_df, linkedin_posts_df,
+         greenhouse_df, lever_df],
         ignore_index=True,
     )
     raw_jobs.drop_duplicates(subset=["job_url"], inplace=True)

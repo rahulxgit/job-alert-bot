@@ -1,11 +1,12 @@
 # Job Alert Bot
 
-Scrapes Indeed, LinkedIn, Google Jobs, Internshala, Naukri, and (best-effort)
-Wellfound every morning, runs a cheap keyword pre-filter, then sends the
-shortlist to Gemini (free tier) to actually read each job description
-against my resume and decide real fit — not just keyword overlap. Logs new
-matches to a Google Sheet and emails me the digest. Runs on GitHub Actions
-so it doesn't depend on my laptop being on.
+Scrapes Indeed, LinkedIn, Google Jobs, Glassdoor, ZipRecruiter, Internshala
+(all-India), Naukri, (best-effort) Wellfound, optional LinkedIn recruiter
+posts, and Greenhouse/Lever company career pages every morning, runs a cheap
+keyword pre-filter, then sends the shortlist to Gemini (free tier) to
+actually read each job description against my resume and decide real fit —
+not just keyword overlap. Logs new matches to a Google Sheet and emails me
+the digest. Runs on GitHub Actions so it doesn't depend on my laptop being on.
 
 ## How it fits together
 
@@ -14,9 +15,9 @@ GitHub Actions (cron, 8 AM IST)
         ↓
 job_search.py
         ↓
-jobspy scrapes Indeed + LinkedIn + Google Jobs
+jobspy scrapes Indeed + LinkedIn + Google Jobs + Glassdoor + ZipRecruiter
         +
-custom scraper pulls paid internships from Internshala
+custom scraper pulls paid internships from Internshala (all-India)
         +
 custom scraper hits Naukri's internal search API directly
         +
@@ -25,8 +26,11 @@ Wellfound actively blocks scrapers, see limitations below)
         +
 optional: LinkedIn recruiter-post scraper (only if LINKEDIN_LI_AT_COOKIE
 is set — off by default, see limitations below)
+        +
+Greenhouse/Lever public APIs for company career pages (limited to
+companies that actually use those ATS platforms — see limitations)
         ↓
-keyword pre-filter (cheap) — cuts hundreds of listings down to ~40 candidates
+keyword pre-filter (cheap) — cuts hundreds of listings down to ~55 candidates
         ↓
 dedup against Google Sheet — drop anything already logged before
         ↓
@@ -38,6 +42,18 @@ log the survivors to the Sheet
         ↓
 email the digest via Gmail API
 ```
+
+## On hitting 50+ matches/day
+
+I widened this pipeline as far as reasonably possible — 8 sources, a higher
+candidate cap (55), a broader search — but I deliberately kept the Gemini
+fit threshold (60/100) where it was rather than lowering it, so the digest
+stays high-signal instead of stuffed with borderline matches just to hit a
+number. Some days will have well over 50 genuinely good matches; other days
+fewer, because that reflects the real job market that day, not a limitation
+in the pipeline. If the daily count still feels too low after running this
+for a week or two, the honest next lever is lowering `LLM_FIT_THRESHOLD` —
+that's a one-line change whenever it's wanted.
 
 ## Known limitations (be aware of these)
 
@@ -73,9 +89,26 @@ email the digest via Gmail API
   knowingly. If it ever causes account trouble, delete the
   `LINKEDIN_LI_AT_COOKIE` secret — the source turns itself off with no
   other changes needed, and everything else keeps working.
-- The Gemini review step calls the API once per shortlisted job (up to 40
+- **ZipRecruiter is primarily a US job board** — added since jobspy supports
+  it trivially, but expect little to no real India coverage from it. Kept
+  in mainly because it's zero extra cost/risk to include.
+- **Company career pages only cover Greenhouse/Lever-based companies.**
+  Postman is confirmed working (`GREENHOUSE_BOARDS`). Many Indian product
+  companies (Flipkart, Swiggy, Zomato, etc.) run custom in-house career
+  sites that have no public API — those aren't and can't easily be covered
+  this way. To add a company, find its Greenhouse/Lever board token by
+  checking whether `job-boards.greenhouse.io/<token>/` or
+  `jobs.lever.co/<token>` loads a real careers page, then add it to
+  `GREENHOUSE_BOARDS` or `LEVER_BOARDS` at the top of `job_search.py`.
+- **Instahyre and Hirist are intentionally not included.** Both render
+  listings via client-side JavaScript rather than plain server HTML,
+  similar to Wellfound's situation — reliably scraping them would need the
+  same guesswork/uncertainty as the Wellfound attempt, and this was
+  deliberately skipped as not worth the uncertain payoff.
+- The Gemini review step calls the API once per shortlisted job (up to 55
   calls/run, paced ~4.5s apart to respect free-tier rate limits) — this is
-  free but means a run can take several minutes.
+  free but means a run can take several minutes, longer now with more
+  sources feeding in (25-minute workflow timeout to accommodate this).
 
 ## One-time setup
 
