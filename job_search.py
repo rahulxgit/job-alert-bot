@@ -84,6 +84,11 @@ SHEET_ID = os.environ["GOOGLE_SHEET_ID"]
 GMAIL_TO = os.environ["ALERT_EMAIL_TO"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
+# Optional — only set this if you want the LinkedIn recruiter-post scraper
+# (see fetch_linkedin_posts_listings below). Leave unset to skip it entirely.
+LINKEDIN_LI_AT_COOKIE = os.environ.get("LINKEDIN_LI_AT_COOKIE", "")
+LINKEDIN_POST_SEARCH_TERMS = ["hiring software engineer fresher", "hiring sde 1", "hiring full stack developer"]
+
 # My actual background — this is what the LLM checks each job against.
 # Keep this in sync with resume-portfolio-sync's profile-data.json.
 CANDIDATE_PROFILE = """
@@ -169,7 +174,7 @@ def fetch_internshala_listings() -> pd.DataFrame:
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
     for term in INTERNSHALA_SEARCH_TERMS:
-        url = f"https://internshala.com/internships/{term}-internship-in-bangalore/"
+        url = f"https://internshala.com/internships/{term}-internship/"
         try:
             resp = requests.get(url, headers=headers, timeout=15)
             resp.raise_for_status()
@@ -358,6 +363,108 @@ def fetch_wellfound_listings() -> pd.DataFrame:
 
     if not rows:
         print("[info] Wellfound returned 0 listings this run — most likely blocked by anti-bot protection, not a code bug")
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Source — LinkedIn recruiter posts (feed posts where recruiters announce
+# openings directly, as opposed to formal LinkedIn Jobs listings). This is
+# OPTIONAL and OFF BY DEFAULT: it only runs if LINKEDIN_LI_AT_COOKIE is set
+# as a secret. Leave that secret unset to skip this entirely — nothing else
+# in the pipeline depends on it.
+#
+# IMPORTANT RISK NOTE: this uses your personal LinkedIn session cookie
+# (li_at) to call LinkedIn's internal search API. LinkedIn's feed content
+# isn't visible to logged-out requests at all, so there's no way to do this
+# without a real session. LinkedIn actively pursues legal action against
+# scrapers and can flag/suspend accounts used for automated access. This
+# was built at explicit request after that risk was flagged — if it ever
+# causes account issues, remove the LINKEDIN_LI_AT_COOKIE secret and this
+# source turns itself off with no other changes needed.
+# ---------------------------------------------------------------------------
+
+def fetch_linkedin_posts_listings() -> pd.DataFrame:
+    if not LINKEDIN_LI_AT_COOKIE:
+        print("[info] LINKEDIN_LI_AT_COOKIE not set — skipping recruiter-post source")
+        return pd.DataFrame()
+
+    rows = []
+    session = requests.Session()
+    session.cookies.set("li_at", LINKEDIN_LI_AT_COOKIE, domain=".linkedin.com")
+
+    # LinkedIn requires the csrf-token header to match a JSESSIONID cookie
+    # value. We fetch the feed once first just to receive that cookie.
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+        "x-restli-protocol-version": "2.0.0",
+    }
+
+    try:
+        session.get("https://www.linkedin.com/feed/", headers=headers, timeout=15)
+        jsessionid = session.cookies.get("JSESSIONID", "").strip('"')
+        if not jsessionid:
+            print("[warn] linkedin posts: no JSESSIONID received — cookie likely expired or invalid")
+            return pd.DataFrame()
+        headers["csrf-token"] = jsessionid
+    except Exception as exc:
+        print(f"[warn] linkedin posts: session init failed: {exc}")
+        return pd.DataFrame()
+
+    for term in LINKEDIN_POST_SEARCH_TERMS:
+        try:
+            resp = session.get(
+                "https://www.linkedin.com/voyager/api/search/dash/clusters",
+                headers=headers,
+                params={
+                    "decorationId": "com.linkedin.voyager.dash.deco.search.SearchClusterCollection-166",
+                    "origin": "GLOBAL_SEARCH_HEADER",
+                    "q": "all",
+                    "query": f"(keywords:{term},flagshipSearchIntent:SEARCH_SRP,"
+                             f"queryParameters:(resultType:List(CONTENT)))",
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            print(f"[warn] linkedin posts search failed for '{term}': {exc}")
+            continue
+
+        # LinkedIn's Voyager response nests actual results inside "included" —
+        # duck-type through it for anything that looks like a feed update
+        # with commentary text, rather than relying on an exact fragile path.
+        for item in data.get("included", []):
+            text = (
+                item.get("commentary", {}).get("text", {}).get("text", "")
+                if isinstance(item.get("commentary"), dict) else ""
+            )
+            if not text or len(text) < 40:
+                continue
+            actor = item.get("actor", {}) if isinstance(item.get("actor"), dict) else {}
+            author_name = actor.get("name", {}).get("text", "") if isinstance(actor.get("name"), dict) else ""
+            permalink = item.get("permalink", "") or item.get("updateMetadata", {}).get("urn", "")
+
+            if not permalink:
+                continue
+
+            rows.append({
+                "job_url": permalink if str(permalink).startswith("http")
+                else f"https://www.linkedin.com/feed/update/{permalink}",
+                "title": text[:80],
+                "company": author_name,
+                "location": "India",
+                "description": text,
+            })
+
+        time.sleep(2)  # LinkedIn rate-limits aggressively — pace conservatively
+
+    if not rows:
+        print("[info] LinkedIn recruiter-post search returned 0 — cookie may have expired or LinkedIn changed the API")
 
     return pd.DataFrame(rows)
 
@@ -568,8 +675,13 @@ def main():
     wellfound_df = fetch_wellfound_listings()
     print(f"  {len(wellfound_df)} listings")
 
+    print("Fetching LinkedIn recruiter posts (optional, cookie-gated)...")
+    linkedin_posts_df = fetch_linkedin_posts_listings()
+    print(f"  {len(linkedin_posts_df)} listings")
+
     raw_jobs = pd.concat(
-        [jobspy_df, internshala_df, naukri_df, wellfound_df], ignore_index=True
+        [jobspy_df, internshala_df, naukri_df, wellfound_df, linkedin_posts_df],
+        ignore_index=True,
     )
     raw_jobs.drop_duplicates(subset=["job_url"], inplace=True)
     print(f"Pulled {len(raw_jobs)} raw listings total")

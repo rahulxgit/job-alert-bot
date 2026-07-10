@@ -22,6 +22,9 @@ custom scraper hits Naukri's internal search API directly
         +
 custom scraper attempts Wellfound (best-effort, often returns nothing —
 Wellfound actively blocks scrapers, see limitations below)
+        +
+optional: LinkedIn recruiter-post scraper (only if LINKEDIN_LI_AT_COOKIE
+is set — off by default, see limitations below)
         ↓
 keyword pre-filter (cheap) — cuts hundreds of listings down to ~40 candidates
         ↓
@@ -52,14 +55,24 @@ email the digest via Gmail API
 - **Y Combinator's "Work at a Startup" job board is not included at all**
   (not even best-effort) — it requires a logged-in session to browse
   listings in the first place, so there's no public page to even attempt.
-- Internshala's HTML structure can change without notice, which would break
-  the scraper silently — watch the Action logs occasionally.
+- Internshala now searches all-India (not Bangalore-only). Its HTML
+  structure can change without notice, which would break the scraper
+  silently — watch the Action logs occasionally.
 - **Naukri is the second most fragile source.** It's pulled via an internal
   search API (`naukri.com/jobapi/v3/search`) that their own site uses but
   isn't officially documented or supported — Naukri can change required
   headers, rate-limit harder, or restructure the response at any time
   without notice. If Naukri listings suddenly drop to zero in the logs,
   this is the first place to check.
+- **LinkedIn recruiter-post scraping is optional, off by default, and the
+  highest-risk source in this project.** It only activates if
+  `LINKEDIN_LI_AT_COOKIE` is set. It uses a real personal session cookie
+  against an undocumented internal API — LinkedIn can change this API
+  without notice, rate-limit or block the session, or in the worst case
+  flag/suspend the account tied to that cookie. This trade-off was made
+  knowingly. If it ever causes account trouble, delete the
+  `LINKEDIN_LI_AT_COOKIE` secret — the source turns itself off with no
+  other changes needed, and everything else keeps working.
 - The Gemini review step calls the API once per shortlisted job (up to 40
   calls/run, paced ~4.5s apart to respect free-tier rate limits) — this is
   free but means a run can take several minutes.
@@ -104,7 +117,27 @@ Keep the three printed values — they go into GitHub secrets below.
 2. No credit card required — this is a genuine free tier, not a trial.
 3. Copy the key (starts with `AIza...`).
 
-### 5. GitHub repo secrets
+### 5. (Optional, higher-risk) LinkedIn recruiter-post cookie
+This turns on scraping LinkedIn feed posts where recruiters announce
+openings directly, separate from formal LinkedIn Jobs listings. **Skip this
+step entirely if you don't want it** — the script checks whether this secret
+exists and just skips the source cleanly if it doesn't; nothing else breaks.
+
+**Read this before adding it:** this uses your own LinkedIn session cookie
+to call an internal, undocumented API. LinkedIn actively pursues legal
+action against scrapers and can flag or suspend accounts used this way —
+this is a materially bigger risk than any other source in this project,
+since it's tied to your real personal account, not a throwaway API key.
+
+If you still want it:
+1. Log into linkedin.com in your browser (Chrome/Edge/Firefox).
+2. Open DevTools (F12) → Application tab (Chrome) or Storage tab (Firefox)
+   → Cookies → `https://www.linkedin.com`.
+3. Find the cookie named `li_at` → copy its value.
+4. This value is as sensitive as a password — it grants access to your
+   account session. Treat it accordingly.
+
+### 6. GitHub repo secrets
 Repo → Settings → Secrets and variables → Actions → New repository secret:
 
 | Secret name | Value |
@@ -116,8 +149,9 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `GMAIL_REFRESH_TOKEN` | from step 3 |
 | `ALERT_EMAIL_TO` | rahulkumarshc00@gmail.com |
 | `GEMINI_API_KEY` | from step 4 |
+| `LINKEDIN_LI_AT_COOKIE` | optional, from step 5 — omit entirely to skip this source |
 
-### 6. Push and test
+### 7. Push and test
 Push this repo to GitHub, then go to Actions → Daily Job Alert → Run workflow
 to trigger it manually and confirm it works before waiting for the 8 AM cron.
 
