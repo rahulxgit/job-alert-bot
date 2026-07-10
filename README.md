@@ -1,10 +1,11 @@
 # Job Alert Bot
 
-Scrapes Indeed, LinkedIn, Google Jobs and Internshala every morning, runs a
-cheap keyword pre-filter, then sends the shortlist to Gemini (free tier) to
-actually read each job description against my resume and decide real fit —
-not just keyword overlap. Logs new matches to a Google Sheet and emails me
-the digest. Runs on GitHub Actions so it doesn't depend on my laptop being on.
+Scrapes Indeed, LinkedIn, Google Jobs, Internshala, and Naukri every
+morning, runs a cheap keyword pre-filter, then sends the shortlist to
+Gemini (free tier) to actually read each job description against my resume
+and decide real fit — not just keyword overlap. Logs new matches to a
+Google Sheet and emails me the digest. Runs on GitHub Actions so it doesn't
+depend on my laptop being on.
 
 ## How it fits together
 
@@ -16,8 +17,10 @@ job_search.py
 jobspy scrapes Indeed + LinkedIn + Google Jobs
         +
 custom scraper pulls paid internships from Internshala
+        +
+custom scraper hits Naukri's internal search API directly
         ↓
-keyword pre-filter (cheap) — cuts hundreds of listings down to ~60 candidates
+keyword pre-filter (cheap) — cuts hundreds of listings down to ~40 candidates
         ↓
 dedup against Google Sheet — drop anything already logged before
         ↓
@@ -40,6 +43,12 @@ email the digest via Gmail API
   right now.
 - Internshala's HTML structure can change without notice, which would break
   the scraper silently — watch the Action logs occasionally.
+- **Naukri is the most fragile source.** It's pulled via an internal search
+  API (`naukri.com/jobapi/v3/search`) that their own site uses but isn't
+  officially documented or supported — Naukri can change required headers,
+  rate-limit harder, or restructure the response at any time without notice.
+  If Naukri listings suddenly drop to zero in the logs, this is the first
+  place to check.
 - The Gemini review step calls the API once per shortlisted job (up to 40
   calls/run, paced ~4.5s apart to respect free-tier rate limits) — this is
   free but means a run can take several minutes.

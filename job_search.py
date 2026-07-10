@@ -1,12 +1,12 @@
 """
 Daily job alert bot.
 
-Pulls fresher/SDE-1 listings from Indeed, LinkedIn, Google Jobs (via jobspy)
-and Internshala (paid internships only), runs a cheap keyword pre-filter to
-cut the list down, then sends the survivors to the Gemini API to actually
-read each job description against my resume and decide real fit — not just
-keyword overlap. Logs matches to a Google Sheet so I don't see repeats, and
-emails me the digest.
+Pulls fresher/SDE-1 listings from Indeed, LinkedIn, Google Jobs (via jobspy),
+Internshala (paid internships only), and Naukri (via their internal search
+API), runs a cheap keyword pre-filter to cut the list down, then sends the
+survivors to the Gemini API to actually read each job description against
+my resume and decide real fit — not just keyword overlap. Logs matches to a
+Google Sheet so I don't see repeats, and emails me the digest.
 
 Run manually with:  python job_search.py
 Runs automatically every day at 8 AM IST via .github/workflows/job-alerts.yml
@@ -45,6 +45,7 @@ RESULTS_PER_SITE = 30
 HOURS_OLD = 24
 
 INTERNSHALA_SEARCH_TERMS = ["full-stack-development", "software-development", "web-development"]
+NAUKRI_SEARCH_TERMS = ["sde 1", "software developer fresher", "full stack developer fresher"]
 
 # Pre-filter keywords — cheap first pass to shrink the list before paying for LLM calls
 PROFILE_KEYWORDS = [
@@ -200,6 +201,76 @@ def fetch_internshala_listings() -> pd.DataFrame:
                 "company": company_el.get_text(strip=True) if company_el else "",
                 "location": location_el.get_text(strip=True) if location_el else "India",
                 "description": f"Internship. Stipend: {stipend_text}",
+            })
+
+        time.sleep(1)  # be polite between requests
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Source — Naukri (via their internal search API — not officially documented,
+# so this is the most likely source to break if Naukri changes something)
+# ---------------------------------------------------------------------------
+
+def fetch_naukri_listings() -> pd.DataFrame:
+    """
+    Naukri's own site calls a JSON search API under the hood
+    (naukri.com/jobapi/v3/search) rather than server-rendering everything.
+    That's what we call here instead of parsing HTML. This endpoint isn't
+    officially documented or supported by Naukri, so it can break without
+    notice if they change headers, rate-limit harder, or restructure the
+    response — treat it as the most fragile of the four sources.
+    """
+    rows = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+        "appid": "109",
+        "systemid": "Naukri",
+        "clientid": "d3skt0p",
+    }
+
+    for term in NAUKRI_SEARCH_TERMS:
+        params = {
+            "noOfResults": 20,
+            "urlType": "search_by_key_loc",
+            "searchType": "adv",
+            "keyword": term,
+            "location": "bangalore",
+            "k": term,
+            "l": "bangalore",
+            "experience": 0,  # freshers only
+        }
+        try:
+            resp = requests.get(
+                "https://www.naukri.com/jobapi/v3/search",
+                headers=headers,
+                params=params,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            print(f"[warn] naukri fetch failed for '{term}': {exc}")
+            continue
+
+        for job in data.get("jobDetails", []):
+            job_id = job.get("jobId", "")
+            static_url = job.get("staticUrl", "")
+            job_url = static_url or (
+                f"https://www.naukri.com/job-listings-{job_id}" if job_id else ""
+            )
+            if not job_url:
+                continue
+
+            rows.append({
+                "job_url": job_url,
+                "title": job.get("title", ""),
+                "company": job.get("companyName", ""),
+                "location": job.get("placeholders", {}).get("location", "India")
+                if isinstance(job.get("placeholders"), dict) else "India",
+                "description": job.get("jobDescription", "") or job.get("title", ""),
             })
 
         time.sleep(1)  # be polite between requests
@@ -405,7 +476,11 @@ def main():
     internshala_df = fetch_internshala_listings()
     print(f"  {len(internshala_df)} listings")
 
-    raw_jobs = pd.concat([jobspy_df, internshala_df], ignore_index=True)
+    print("Fetching jobs from Naukri...")
+    naukri_df = fetch_naukri_listings()
+    print(f"  {len(naukri_df)} listings")
+
+    raw_jobs = pd.concat([jobspy_df, internshala_df, naukri_df], ignore_index=True)
     raw_jobs.drop_duplicates(subset=["job_url"], inplace=True)
     print(f"Pulled {len(raw_jobs)} raw listings total")
 
