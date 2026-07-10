@@ -89,43 +89,81 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 LINKEDIN_LI_AT_COOKIE = os.environ.get("LINKEDIN_LI_AT_COOKIE", "")
 LINKEDIN_POST_SEARCH_TERMS = ["hiring software engineer fresher", "hiring sde 1", "hiring full stack developer"]
 
-# My actual background — this is what the LLM checks each job against.
-# Keep this in sync with resume-portfolio-sync's profile-data.json.
-CANDIDATE_PROFILE = """
-Rahul Kumar — final-year B.Tech CSE student, NIT Raipur (2022-2026), CGPA 8.67.
-Targeting: SDE-1 / Junior Software Engineer roles, and paid internships, at
-Indian product companies, AI-first startups, and funded companies, preferably Bengaluru.
+PROFILE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "profile-data.json")
 
-Experience: SDE Intern at Bluestock Fintech (Feb-Mar 2026, remote). Built and shipped
-three production projects: Logic Looper (client-first daily puzzle platform — React,
-Redux Toolkit, IndexedDB, Node.js, Express, PostgreSQL/Prisma, ~70% reduction in API
-calls, ~60% server load reduction via CDN-first ISR, 500+ concurrent users, 100%
-offline capable), an open-source AI Profile Picture Maker, and The Corporate Blog.
-
-Key projects:
-- DriveClone: MERN Google Drive clone with a native MCP server letting AI agents
-  interact with the drive directly — JWT auth, Cloudinary storage, deployed on
-  Render/Vercel. Strongest AI-engineering differentiator.
-- AI Inference Playground: React/TypeScript LLM inference playground with token
-  streaming, live latency metrics, WCAG AA accessibility, custom diff viewer.
-- Smart Bookmark App: Next.js + Supabase, SSR auth, layered architecture.
-- Realtime Gallery: React + Zustand + InstantDB, real-time multi-user sync.
-
-Tech stack: JavaScript, TypeScript, Java, Python, C++, SQL, React, Next.js,
-Redux, Node.js, Express, MongoDB, PostgreSQL, MySQL, Prisma, Supabase, Firebase,
-REST APIs, MCP servers, RAG pipelines, Claude/OpenAI API integration, Docker,
-Git, GitHub Actions, Vercel, Render.
-
-Achievements: 500+ DSA problems solved (LeetCode rating 1800+), 99.41 percentile
-Naukri Young Turks 2025, TCS CodeVita Season 13 rank ~8,552. Leadership: Sponsorship
-& Outreach Lead at NIT Raipur Innovation Cell, Technical Events Coordinator at
-Robotics Club, co-organized a 200+ participant national hackathon.
-
-Strongest positioning: the AI-engineering layer (MCP servers, RAG, LLM API
-integrations) that's usually missing from a typical MERN-fresher profile.
+# Minimal fallback used only if profile-data.json is missing or malformed,
+# so the pipeline degrades gracefully instead of crashing outright.
+_FALLBACK_PROFILE = """
+Final-year CSE student targeting SDE-1 / Junior Software Engineer roles and
+paid internships at Indian product companies and AI-first startups.
 NOT a fit for: senior/staff/lead/principal roles, roles requiring 3+ years
 of professional experience, unpaid internships.
 """
+
+
+def build_candidate_profile() -> str:
+    """
+    Builds the text block Gemini reads to judge job fit, directly from
+    profile-data.json — the same source-of-truth file the resume-portfolio-sync
+    skill uses. This means updating the resume/portfolio automatically flows
+    through here too, instead of needing a manual edit to this script.
+    """
+    try:
+        with open(PROFILE_DATA_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as exc:
+        print(f"[warn] could not load profile-data.json ({exc}) — using minimal fallback profile")
+        return _FALLBACK_PROFILE
+
+    lines = []
+
+    name = data.get("contact", {}).get("name", "")
+    headline = data.get("headline", "")
+    target_roles = ", ".join(data.get("target_roles", []))
+    target_focus = data.get("target_focus", "")
+    lines.append(f"{name} — {headline}.")
+    lines.append(f"Targeting: {target_roles} at {target_focus}.")
+
+    for edu in data.get("education", []):
+        lines.append(
+            f"\nEducation: {edu.get('degree', '')}, {edu.get('institution', '')} "
+            f"({edu.get('duration', '')}), {edu.get('gpa', '')}. {edu.get('notes', '')}"
+        )
+
+    for exp in data.get("experience", []):
+        highlights = " ".join(exp.get("highlights", []))
+        lines.append(
+            f"\nExperience: {exp.get('role', '')} at {exp.get('company', '')} "
+            f"({exp.get('duration', '')}, {exp.get('location', '')}). {highlights}"
+        )
+
+    if data.get("projects"):
+        lines.append("\nKey projects:")
+        for proj in data["projects"]:
+            tech = ", ".join(proj.get("tech", []))
+            lines.append(f"- {proj.get('name', '')}: {proj.get('tagline', '')}. Tech: {tech}.")
+
+    skills = data.get("skills", {})
+    if skills:
+        all_skills = [s for group in skills.values() for s in group]
+        lines.append(f"\nTech stack: {', '.join(all_skills)}.")
+
+    if data.get("achievements"):
+        lines.append(f"\nAchievements: {'; '.join(data['achievements'])}.")
+
+    positioning = data.get("about_narrative", {}).get("positioning", "")
+    if positioning:
+        lines.append(f"\nStrongest positioning: {positioning}")
+
+    lines.append(
+        "\nNOT a fit for: senior/staff/lead/principal roles, roles requiring "
+        "3+ years of professional experience, unpaid internships."
+    )
+
+    return "\n".join(lines)
+
+
+CANDIDATE_PROFILE = build_candidate_profile()
 
 
 # ---------------------------------------------------------------------------

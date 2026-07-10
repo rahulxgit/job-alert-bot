@@ -159,13 +159,26 @@ to trigger it manually and confirm it works before waiting for the 8 AM cron.
 
 - `SEARCH_TERMS`, `LOCATIONS`, `PROFILE_KEYWORDS`, `PRIORITY_COMPANIES`,
   `INTERNSHALA_SEARCH_TERMS` are all at the top of `job_search.py`.
-- `CANDIDATE_PROFILE` is the text block Gemini actually reads to judge fit —
-  keep this in sync with `profile-data.json` from the resume-portfolio-sync
-  skill whenever the resume changes.
+- **`data/profile-data.json` now drives `CANDIDATE_PROFILE` automatically** —
+  this is a copy of the same source-of-truth file the resume-portfolio-sync
+  skill uses. Whenever the resume/portfolio changes, update
+  `data/profile-data.json` in this repo and push — `job_search.py` rebuilds
+  the profile text Gemini reads from this file at the start of every run,
+  no manual script edits needed anymore. If the file is ever missing or
+  malformed, the script falls back to a minimal generic profile and logs a
+  warning rather than crashing.
 - `LLM_FIT_THRESHOLD` (currently 60) controls how strict Gemini's review is.
   Raise it if the digest is too noisy, lower it if too sparse.
 - `MAX_LLM_CANDIDATES` (currently 40) caps how many jobs get sent to Gemini
   per run — kept conservative to stay within free-tier rate limits (roughly
   15 requests/minute on Flash-Lite). The script paces calls 4.5s apart to
   avoid 429 errors; raising the candidate cap will make the run take longer.
+
+## Known Sheet setup issue
+
+If your Sheet's header row still reads `Score | Fit` instead of
+`Fit Score | Reason`, the columns are just mislabeled (data is correct, only
+the header text is wrong) — rename those two header cells directly in the
+Sheet. This isn't something the script can fix since it only appends rows,
+it never touches row 1.
 
