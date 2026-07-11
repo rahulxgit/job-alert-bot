@@ -313,6 +313,32 @@ to trigger it manually and confirm it works before waiting for the 8 AM cron.
   every day means that source needs attention) without needing to open
   the Action logs each time.
 
+## Outreach prioritization
+
+Since the actual strategy is cold email / referral outreach rather than
+portal applications, the pipeline now actively favors contactable jobs at
+two points, without loosening the quality bar:
+
+1. **Pre-filter boost** — a listing with a directly-published email in its
+   JD gets +4 in the keyword pre-filter score, so it's more likely to
+   survive the cut down to the ~55 candidates sent to Gemini, instead of
+   being trimmed purely on keyword/fresher-signal strength.
+2. **Final ordering** — after Gemini review and email-finding, results are
+   re-sorted by (has a contact, fit score) instead of fit score alone.
+   Jobs with a found email — whether from the JD directly or the Hunter.io
+   fallback — appear first in both the Sheet and the email digest, marked
+   with 📧 in the email. Fit score still breaks ties and is still the
+   actual quality gate: a mediocre-fit job with a contact never displaces
+   a genuine fit without one, this only reorders what already passed
+   review.
+
+The one Hunter.io fallback call available per run (see the quota note
+above) is spent on the **highest-fit job that doesn't already have a
+JD-published email**, since `enrich_with_emails` runs on the
+already fit-sorted list before the final contact-based re-sort — so the
+limited quota goes to the best-fit candidate that needs it most, not
+whichever job happens to be processed first.
+
 ## Self-audit fixes (found by code review, not a test run)
 
 - **`HUNTER_MAX_CALLS_PER_RUN` was set to 15, but Hunter's free tier is

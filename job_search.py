@@ -15,8 +15,12 @@ falls back to my self-hosted multi-provider AI gateway
 (github.com/rahulxgit/ai-gateway) as a last resort. For jobs that pass,
 tries to find a real recruiter/company email — first from the JD text
 itself, then optionally via Hunter.io — for cold-outreach/referral
-purposes. Logs matches to a Google Sheet so I don't see repeats, and
-emails me the digest.
+purposes. Jobs with a directly-published contact email get a boost in the
+pre-filter so they survive to Gemini review more reliably, and the final
+list is sorted with contactable jobs first, fit score second — fit is
+still the quality gate (contact-ability never lets a worse-fit job in),
+but among genuine fits, cold-email-ready ones come first. Logs matches to
+a Google Sheet so I don't see repeats, and emails me the digest.
 
 Run manually with:  python job_search.py
 Runs automatically every day at 8 AM IST via .github/workflows/job-alerts.yml
@@ -813,6 +817,12 @@ def keyword_prefilter_score(row: pd.Series) -> int:
     score += sum(kw in full_text for kw in PROFILE_KEYWORDS)
     if any(comp in full_text for comp in PRIORITY_COMPANIES):
         score += 3
+    # A listing with a directly-published contact email is genuinely more
+    # actionable for cold-email/referral outreach than an identical one
+    # without — give it a real boost so it survives the cut to Gemini
+    # review more reliably, rather than being trimmed purely on keywords.
+    if extract_email_from_text(str(row.get("description", "") or "")):
+        score += 4
     score -= seniority_hits
     return max(score, 0)
 
@@ -1141,12 +1151,17 @@ def build_email_body(df: pd.DataFrame, source_counts: dict = None) -> str:
         lines.append("No new matching listings today.")
         return "\n".join(lines)
 
-    lines.append(f"{len(df)} new job(s) matched today (Gemini-reviewed):\n")
+    contact_count = (df["recruiter_email"] != "").sum() if "recruiter_email" in df.columns else 0
+    lines.append(
+        f"{len(df)} new job(s) matched today (Gemini-reviewed) — "
+        f"{contact_count} have a contact for outreach, listed first:\n"
+    )
     for _, row in df.iterrows():
         email = row.get("recruiter_email") or ""
         email_line = f"  Contact: {email}\n" if email else ""
+        marker = "📧 " if email else ""
         lines.append(
-            f"- {row.get('title')} @ {row.get('company')} ({row.get('location')}) "
+            f"- {marker}{row.get('title')} @ {row.get('company')} ({row.get('location')}) "
             f"— fit {row.get('fit_score')}/100\n"
             f"  Why: {row.get('reason')}\n"
             f"{email_line}"
@@ -1251,6 +1266,15 @@ def main():
     reviewed = enrich_with_emails(reviewed)
     found_count = (reviewed["recruiter_email"] != "").sum()
     print(f"  found an email for {found_count}/{len(reviewed)} jobs")
+
+    # Prioritize outreach-ready jobs: within the genuine fits Gemini already
+    # approved, ones with a real contact path (for cold email/referral) are
+    # surfaced first. Fit score still breaks ties and still remains the
+    # quality gate — this only reorders what's already passed review, it
+    # doesn't let a worse-fit job in just because it has an email.
+    reviewed["has_contact"] = reviewed["recruiter_email"].astype(bool)
+    reviewed = reviewed.sort_values(by=["has_contact", "fit_score"], ascending=[False, False])
+    reviewed = reviewed.drop(columns=["has_contact"])
 
     log_new_jobs(sheet, reviewed)
 
