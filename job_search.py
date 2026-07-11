@@ -8,12 +8,15 @@ Naukri (via their internal search API), Wellfound (best-effort), optional
 LinkedIn recruiter-post scraping (cookie-gated), company career pages via
 Greenhouse/Lever public APIs, and optional YouTube job-alert channels (via
 the official YouTube Data API, key-gated). Runs a cheap keyword pre-filter
-to cut the list down, then sends the survivors to the Gemini API to
-actually read each job description against my resume and decide real fit
-— not just keyword overlap. For jobs that pass, tries to find a real
-recruiter/company email — first from the JD text itself, then optionally
-via Hunter.io — for cold-outreach/referral purposes. Logs matches to a
-Google Sheet so I don't see repeats, and emails me the digest.
+to cut the list down, then sends the survivors to Gemini to actually read
+each job description against my resume and decide real fit — not just
+keyword overlap. If Gemini's retries are exhausted (e.g. daily quota),
+falls back to my self-hosted multi-provider AI gateway
+(github.com/rahulxgit/ai-gateway) as a last resort. For jobs that pass,
+tries to find a real recruiter/company email — first from the JD text
+itself, then optionally via Hunter.io — for cold-outreach/referral
+purposes. Logs matches to a Google Sheet so I don't see repeats, and
+emails me the digest.
 
 Run manually with:  python job_search.py
 Runs automatically every day at 8 AM IST via .github/workflows/job-alerts.yml
@@ -814,19 +817,17 @@ def prefilter(df: pd.DataFrame, min_score: int = 3) -> pd.DataFrame:
 GEMINI_MODEL = "gemini-2.5-flash-lite"  # free tier, generous daily quota
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
+# Fallback tier — my own self-hosted multi-provider AI gateway
+# (github.com/rahulxgit/ai-gateway), used ONLY when Gemini's retries are
+# exhausted (e.g. daily free-tier quota exhausted). The gateway itself
+# already fails over across 7+ providers internally, so one call here is
+# effectively backed by multiple providers already — no retry loop needed
+# on this side. No auth required (open endpoint on Render).
+AI_GATEWAY_URL = os.environ.get("AI_GATEWAY_URL") or "https://ai-gateway-wx35.onrender.com"
 
-def llm_evaluate_job(title: str, company: str, description: str) -> dict:
-    """
-    Returns {"fit_score": int 0-100, "is_fresher_appropriate": bool, "reason": str}
-    Falls back to a safe "skip" result if the API call fails after retries,
-    so one bad call doesn't crash the whole run.
 
-    Retries specifically on 429 (rate limit) with exponential backoff, since
-    free-tier Gemini can hit per-minute limits even with pacing between
-    calls. Note: if the free tier's *daily* quota is exhausted (not just a
-    per-minute burst), retries won't help — that only resets the next day.
-    """
-    prompt = f"""Here is a candidate's background:
+def _build_fit_prompt(title: str, company: str, description: str) -> str:
+    return f"""Here is a candidate's background:
 
 {CANDIDATE_PROFILE}
 
@@ -842,6 +843,43 @@ similar, and reject unpaid internships. Respond with ONLY a JSON object, no
 other text, in this exact shape:
 {{"fit_score": <0-100 integer>, "is_fresher_appropriate": <true/false>, "reason": "<one sentence>"}}"""
 
+
+def _parse_json_verdict(raw_text: str) -> dict:
+    text = raw_text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return json.loads(text)
+
+
+def gateway_evaluate_job(title: str, company: str, description: str) -> dict:
+    """
+    Fallback evaluation via the self-hosted AI gateway. Returns None (not a
+    verdict dict) if the gateway itself is unreachable or errors, so the
+    caller can distinguish "gateway also failed" from "gateway said no".
+    """
+    prompt = _build_fit_prompt(title, company, description)
+    try:
+        resp = requests.post(
+            f"{AI_GATEWAY_URL}/chat",
+            headers={"Content-Type": "application/json"},
+            json={"messages": [{"role": "user", "content": prompt}], "taskType": "reasoning"},
+            timeout=45,  # the gateway may itself be failing over across providers internally
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return _parse_json_verdict(data.get("content", ""))
+    except Exception as exc:
+        print(f"[warn] AI gateway fallback also failed for '{title}' @ '{company}': {exc}")
+        return None
+
+
+def llm_evaluate_job(title: str, company: str, description: str) -> dict:
+    """
+    Returns {"fit_score": int 0-100, "is_fresher_appropriate": bool, "reason": str}
+    Tries Gemini first (with retry-with-backoff on 429), and only falls
+    back to the self-hosted AI gateway if Gemini's retries are fully
+    exhausted or the call fails outright — so the gateway is a genuine
+    last resort, not a first choice, keeping normal-day behavior unchanged.
+    """
+    prompt = _build_fit_prompt(title, company, description)
     max_retries = 3
     backoff_seconds = 15
 
@@ -864,18 +902,26 @@ other text, in this exact shape:
                     continue
                 else:
                     print(f"[warn] '{title}' @ '{company}' still rate-limited after {max_retries} retries — "
-                          f"likely the daily free-tier quota is exhausted, not just a burst")
-                    return {"fit_score": 0, "is_fresher_appropriate": False, "reason": "rate limited — not evaluated"}
+                          f"falling back to AI gateway")
+                    fallback = gateway_evaluate_job(title, company, description)
+                    if fallback is not None:
+                        return fallback
+                    return {"fit_score": 0, "is_fresher_appropriate": False,
+                             "reason": "all LLM providers failed — not evaluated"}
 
             resp.raise_for_status()
-            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-            text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-            return json.loads(text)
+            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            return _parse_json_verdict(text)
         except Exception as exc:
-            print(f"[warn] LLM evaluation failed for '{title}' @ '{company}': {exc}")
-            return {"fit_score": 0, "is_fresher_appropriate": False, "reason": "evaluation failed"}
+            print(f"[warn] Gemini evaluation failed for '{title}' @ '{company}': {exc} — falling back to AI gateway")
+            fallback = gateway_evaluate_job(title, company, description)
+            if fallback is not None:
+                return fallback
+            return {"fit_score": 0, "is_fresher_appropriate": False,
+                     "reason": "all LLM providers failed — not evaluated"}
 
-    return {"fit_score": 0, "is_fresher_appropriate": False, "reason": "evaluation failed"}
+    return {"fit_score": 0, "is_fresher_appropriate": False,
+             "reason": "all LLM providers failed — not evaluated"}
 
 
 CONSECUTIVE_RATE_LIMIT_BREAKER = 5  # stop early after this many in a row fail with 429 even after retries
@@ -898,18 +944,19 @@ def llm_filter(df: pd.DataFrame) -> pd.DataFrame:
         results.append(verdict)
         evaluated_rows.append(idx)
 
-        if verdict.get("reason") == "rate limited — not evaluated":
+        if verdict.get("reason") == "all LLM providers failed — not evaluated":
             consecutive_rate_limits += 1
         else:
             consecutive_rate_limits = 0
 
         if consecutive_rate_limits >= CONSECUTIVE_RATE_LIMIT_BREAKER:
             remaining = len(df) - len(evaluated_rows)
-            print(f"[warn] {CONSECUTIVE_RATE_LIMIT_BREAKER} candidates in a row hit the rate limit even "
-                  f"after retries — this strongly suggests today's Gemini free-tier daily quota is "
-                  f"exhausted, not a transient burst. Stopping here rather than burning the rest of the "
-                  f"run's time budget retrying a dead wall. {remaining} candidates were left unevaluated "
-                  f"and will be picked up automatically on the next run, since they were never logged.")
+            print(f"[warn] {CONSECUTIVE_RATE_LIMIT_BREAKER} candidates in a row failed on BOTH Gemini and the "
+                  f"AI gateway fallback — this is a strong signal something more fundamental is down (not "
+                  f"just Gemini's quota, since the gateway itself already fails over across 7+ providers). "
+                  f"Stopping here rather than burning the rest of the run's time budget. {remaining} "
+                  f"candidates were left unevaluated and will be picked up automatically on the next run, "
+                  f"since they were never logged.")
             break
 
         # Free-tier Gemini is rate-limited (~15 req/min on Flash-Lite) —

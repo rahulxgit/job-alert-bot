@@ -43,6 +43,9 @@ dedup against Google Sheet — drop anything already logged before
 Gemini API reads each remaining JD against my actual resume/profile,
 scores genuine fit 0-100, rejects unpaid internships and roles that
 need real professional experience
+        ↓ (if Gemini's retries are exhausted — e.g. daily quota gone)
+falls back to my self-hosted AI gateway (github.com/rahulxgit/ai-gateway),
+which itself already fails over across 7+ providers internally
         ↓
 log the survivors to the Sheet
         ↓
@@ -141,15 +144,25 @@ that's a one-line change whenever it's wanted.
   search each run (not hardcoded), so a channel with an ambiguous or
   common name could occasionally resolve to the wrong result — worth
   spot-checking `YOUTUBE_CHANNEL_NAMES` results in the logs occasionally.
-- **Gemini free-tier rate limits are stricter than they first appear.**
-  The script paces calls 4.5s apart and retries on 429 with backoff, but
-  if you trigger several manual runs back-to-back on the same day (e.g.
-  while testing changes), you can exhaust the *daily* free quota, not
-  just the per-minute one — retries can't fix that, only the next day's
-  reset can. If a run comes back with almost everything failing on 429
-  despite retries, that's very likely same-day quota exhaustion from
-  earlier testing, not a bug. Avoid triggering many full manual runs in
-  one day while iterating; let the daily cron do most of the real runs.
+- **Gemini free-tier rate limits are stricter than they first appear —
+  but now there's a real fallback.** The script paces calls 4.5s apart and
+  retries on 429 with backoff; if that's still exhausted (e.g. same-day
+  quota gone from heavy manual testing), it now falls back to my
+  self-hosted AI gateway (github.com/rahulxgit/ai-gateway) automatically,
+  no config needed beyond it being reachable. The gateway itself already
+  routes across 7+ providers internally, so this fallback is meaningfully
+  more resilient than Gemini alone — the "everything failed" circuit
+  breaker now only trips if *both* tiers fail, which is a much rarer and
+  more genuine "something is actually down" signal than before.
+- **The AI gateway fallback has no built-in auth or retry of its own on
+  this side** — it's called once per job as a last resort, relying on the
+  gateway's own internal failover rather than retrying it directly. If the
+  gateway URL ever changes, override it via the optional `AI_GATEWAY_URL`
+  secret (defaults to `https://ai-gateway-wx35.onrender.com`). Since it's
+  an open endpoint with no API key, anyone who discovers the URL could in
+  theory call it directly and consume the underlying provider quotas —
+  worth keeping in mind since it's a shared resource, not something
+  scoped only to this bot.
 - The Gemini review step calls the API once per shortlisted job (up to 55
   calls/run, paced ~4.5s apart to respect free-tier rate limits, with
   automatic retry-with-backoff on 429s) — this is free but means a run can
@@ -254,6 +267,7 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `LINKEDIN_LI_AT_COOKIE` | optional, from step 5 — omit entirely to skip this source |
 | `HUNTER_API_KEY` | optional, from step 6 — omit entirely to skip this fallback |
 | `YOUTUBE_API_KEY` | optional, from step 7 — omit entirely to skip this source |
+| `AI_GATEWAY_URL` | optional — omit entirely to use the default `https://ai-gateway-wx35.onrender.com`; only set this if the gateway is redeployed elsewhere |
 
 ### 9. ⚠️ Update the Sheet header row before running again
 The script now appends an 8th column (`Email`) after `Date Added`. If
