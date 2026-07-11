@@ -5,14 +5,15 @@ Pulls fresher/SDE-1 listings from Indeed, LinkedIn, Google Jobs (via
 jobspy — Glassdoor and ZipRecruiter were tried and removed, both fully
 blocked from GitHub Actions), Internshala (paid internships, all-India),
 Naukri (via their internal search API), Wellfound (best-effort), optional
-LinkedIn recruiter-post scraping (cookie-gated), and company career pages
-via Greenhouse/Lever public APIs. Runs a cheap keyword pre-filter to cut
-the list down, then sends the survivors to the Gemini API to actually read
-each job description against my resume and decide real fit — not just
-keyword overlap. For jobs that pass, tries to find a real recruiter/company
-email — first from the JD text itself, then optionally via Hunter.io — for
-cold-outreach/referral purposes. Logs matches to a Google Sheet so I don't
-see repeats, and emails me the digest.
+LinkedIn recruiter-post scraping (cookie-gated), company career pages via
+Greenhouse/Lever public APIs, and optional YouTube job-alert channels (via
+the official YouTube Data API, key-gated). Runs a cheap keyword pre-filter
+to cut the list down, then sends the survivors to the Gemini API to
+actually read each job description against my resume and decide real fit
+— not just keyword overlap. For jobs that pass, tries to find a real
+recruiter/company email — first from the JD text itself, then optionally
+via Hunter.io — for cold-outreach/referral purposes. Logs matches to a
+Google Sheet so I don't see repeats, and emails me the digest.
 
 Run manually with:  python job_search.py
 Runs automatically every day at 8 AM IST via .github/workflows/job-alerts.yml
@@ -23,7 +24,7 @@ import json
 import os
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 
 import gspread
@@ -128,6 +129,26 @@ COMPANY_SUFFIXES_TO_STRIP = [
     " inc.", " inc", " llc", " technologies", " technology", " labs",
     " solutions", " services", " systems", " india", " co.", " ltd",
 ]
+
+# Optional — only used if YOUTUBE_API_KEY is set. Free quota is 10,000
+# units/day; resolving a channel name costs 100 units (search.list), and
+# reading its recent videos costs ~2 units, so ~21 channels is well within
+# budget for one run/day. These job-alert-style channels typically post
+# openings/links directly in the video description, so each recent video is
+# treated as one candidate and fed through the same Gemini review as every
+# other source — one video sometimes bundles multiple postings together,
+# which is a known v1 simplification rather than parsing each one out.
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
+YOUTUBE_CHANNEL_NAMES = [
+    "Placement Lelo", "DebugWithShubham", "Arsh Goyal", "PrepInsta",
+    "College Wallah", "Unstop", "Face Prep", "Coding Ninjas", "GeeksforGeeks",
+    "KN academy", "Placement Drive", "Jobs4Freshers", "Freshers Now",
+    "Freshers Jobs", "Apna College", "Love Babbar CodeHelp",
+    "Take U Forward Striver", "Kunal Kushwaha", "Anuj Bhaiya", "Coder Army",
+    "Scaler",
+]
+YOUTUBE_MAX_VIDEOS_PER_CHANNEL = 3
+YOUTUBE_VIDEO_MAX_AGE_HOURS = 48  # covers a daily run with some buffer
 
 PROFILE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "profile-data.json")
 
@@ -638,6 +659,121 @@ def fetch_lever_listings() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Source — YouTube job-alert channels. Optional, off unless YOUTUBE_API_KEY
+# is set. Uses the official YouTube Data API v3 (free tier, 10,000
+# units/day) — no scraping, no ToS risk, same trust level as Gmail/Sheets.
+#
+# These channels typically post company/role/apply-link info directly in
+# the video description, so each recent video becomes one candidate that
+# flows through the same keyword pre-filter + Gemini review as every other
+# source. A video that bundles several distinct openings together isn't
+# split apart in this v1 — Gemini judges the video as a whole.
+# ---------------------------------------------------------------------------
+
+YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+
+
+def youtube_resolve_channel_id(channel_name: str) -> str:
+    try:
+        resp = requests.get(
+            f"{YOUTUBE_API_BASE}/search",
+            params={
+                "key": YOUTUBE_API_KEY,
+                "q": channel_name,
+                "type": "channel",
+                "part": "snippet",
+                "maxResults": 1,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+        if items:
+            return items[0]["snippet"]["channelId"]
+    except Exception as exc:
+        print(f"[warn] youtube: couldn't resolve channel '{channel_name}': {exc}")
+    return ""
+
+
+def youtube_get_uploads_playlist(channel_id: str) -> str:
+    try:
+        resp = requests.get(
+            f"{YOUTUBE_API_BASE}/channels",
+            params={"key": YOUTUBE_API_KEY, "id": channel_id, "part": "contentDetails"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+        if items:
+            return items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    except Exception as exc:
+        print(f"[warn] youtube: couldn't get uploads playlist for '{channel_id}': {exc}")
+    return ""
+
+
+def fetch_youtube_listings() -> pd.DataFrame:
+    if not YOUTUBE_API_KEY:
+        print("[info] YOUTUBE_API_KEY not set — skipping YouTube job-channel source")
+        return pd.DataFrame()
+
+    rows = []
+    cutoff = datetime.utcnow() - timedelta(hours=YOUTUBE_VIDEO_MAX_AGE_HOURS)
+
+    for channel_name in YOUTUBE_CHANNEL_NAMES:
+        channel_id = youtube_resolve_channel_id(channel_name)
+        if not channel_id:
+            continue
+
+        uploads_playlist = youtube_get_uploads_playlist(channel_id)
+        if not uploads_playlist:
+            continue
+
+        try:
+            resp = requests.get(
+                f"{YOUTUBE_API_BASE}/playlistItems",
+                params={
+                    "key": YOUTUBE_API_KEY,
+                    "playlistId": uploads_playlist,
+                    "part": "snippet",
+                    "maxResults": YOUTUBE_MAX_VIDEOS_PER_CHANNEL,
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+        except Exception as exc:
+            print(f"[warn] youtube: couldn't fetch videos for '{channel_name}': {exc}")
+            continue
+
+        for item in items:
+            snippet = item.get("snippet", {})
+            published_at = snippet.get("publishedAt", "")
+            try:
+                published_dt = datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%SZ")
+            except ValueError:
+                published_dt = None
+
+            if published_dt and published_dt < cutoff:
+                continue  # skip anything older than the daily window
+
+            video_id = snippet.get("resourceId", {}).get("videoId", "")
+            if not video_id:
+                continue
+
+            rows.append({
+                "job_url": f"https://www.youtube.com/watch?v={video_id}",
+                "title": snippet.get("title", ""),
+                "company": channel_name,
+                "location": "India",
+                "description": snippet.get("description", ""),
+            })
+
+        time.sleep(0.3)
+
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
 # Stage 1 — cheap keyword pre-filter (shrinks the list before paying for LLM calls)
 # ---------------------------------------------------------------------------
 
@@ -994,6 +1130,10 @@ def main():
     lever_df = fetch_lever_listings()
     print(f"  {len(greenhouse_df) + len(lever_df)} listings")
 
+    print("Fetching YouTube job-alert channels (optional, key-gated)...")
+    youtube_df = fetch_youtube_listings()
+    print(f"  {len(youtube_df)} listings")
+
     source_counts = {
         "Indeed/LinkedIn/Google": len(jobspy_df),
         "Internshala": len(internshala_df),
@@ -1001,11 +1141,12 @@ def main():
         "Wellfound": len(wellfound_df),
         "LinkedIn posts": len(linkedin_posts_df),
         "Career pages": len(greenhouse_df) + len(lever_df),
+        "YouTube": len(youtube_df),
     }
 
     raw_jobs = pd.concat(
         [jobspy_df, internshala_df, naukri_df, wellfound_df, linkedin_posts_df,
-         greenhouse_df, lever_df],
+         greenhouse_df, lever_df, youtube_df],
         ignore_index=True,
     )
     raw_jobs.drop_duplicates(subset=["job_url"], inplace=True)

@@ -32,6 +32,9 @@ is set — off by default, see limitations below)
         +
 Greenhouse/Lever public APIs for company career pages (limited to
 companies that actually use those ATS platforms — see limitations)
+        +
+optional: YouTube job-alert channels via the official Data API (only if
+YOUTUBE_API_KEY is set — off by default)
         ↓
 keyword pre-filter (cheap) — cuts hundreds of listings down to ~55 candidates
         ↓
@@ -112,6 +115,32 @@ that's a one-line change whenever it's wanted.
   similar to Wellfound's situation — reliably scraping them would need the
   same guesswork/uncertainty as the Wellfound attempt, and this was
   deliberately skipped as not worth the uncertain payoff.
+- **WhatsApp Channels are intentionally not included, on purpose, not as a
+  gap.** There's no official API for reading arbitrary public WhatsApp
+  Channels, and the only unofficial route (WhatsApp Web automation) needs
+  a persistent authenticated session — fundamentally incompatible with
+  GitHub Actions runners, which are stateless and use a different IP every
+  run. That exact pattern (repeated automated logins from rotating IPs) is
+  what WhatsApp's anti-automation detection is built to catch, risking a
+  ban on whatever personal number got linked. This was a deliberate call,
+  not a missed feature.
+- **Zapier is not wired into this script, and can't be directly** — Zapier
+  connectors are tools available inside a Claude *chat*, not something
+  importable into a standalone Python script running on GitHub Actions. If
+  Zapier automation is wanted, that would be a separate, parallel
+  automation built on Zapier's own platform (e.g. a Zap watching an RSS
+  feed and writing to the Sheet), independent of this repo — not something
+  that plugs into `job_search.py`.
+- **YouTube job-channel scraping is a v1 simplification.** Each recent
+  video is treated as one candidate (title + full description), even
+  though these channels often bundle several distinct job postings into a
+  single video description. Gemini reviews the video as a whole rather
+  than each opening separately, so a video with one great match buried
+  among five irrelevant ones might not score as highly as it should.
+  Channel name → channel ID resolution also happens via a live YouTube
+  search each run (not hardcoded), so a channel with an ambiguous or
+  common name could occasionally resolve to the wrong result — worth
+  spot-checking `YOUTUBE_CHANNEL_NAMES` results in the logs occasionally.
 - **Gemini free-tier rate limits are stricter than they first appear.**
   The script paces calls 4.5s apart and retries on 429 with backoff, but
   if you trigger several manual runs back-to-back on the same day (e.g.
@@ -196,7 +225,21 @@ the whole month in one run.
 1. Go to https://hunter.io → sign up free (no card needed for the free tier).
 2. Dashboard → API → copy your API key.
 
-### 7. GitHub repo secrets
+### 7. (Optional) YouTube Data API key — for job-alert channel scraping
+Official free API, no scraping — reads recent videos + descriptions from
+~21 placement/job-alert YouTube channels (Apna College, Take U Forward,
+PrepInsta, etc.). Free tier is 10,000 units/day, comfortably covers this.
+
+1. In the same Google Cloud project as steps 2-4, go to
+   https://console.cloud.google.com/apis/library/youtube.googleapis.com
+   → Enable.
+2. Go to https://console.cloud.google.com/apis/credentials → Create
+   Credentials → API key. Copy it.
+3. (Recommended) Click into the new key → restrict it to only the
+   "YouTube Data API v3" under API restrictions, so it can't be misused
+   for anything else if it ever leaks.
+
+### 8. GitHub repo secrets
 Repo → Settings → Secrets and variables → Actions → New repository secret:
 
 | Secret name | Value |
@@ -210,8 +253,9 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `GEMINI_API_KEY` | from step 4 |
 | `LINKEDIN_LI_AT_COOKIE` | optional, from step 5 — omit entirely to skip this source |
 | `HUNTER_API_KEY` | optional, from step 6 — omit entirely to skip this fallback |
+| `YOUTUBE_API_KEY` | optional, from step 7 — omit entirely to skip this source |
 
-### 8. ⚠️ Update the Sheet header row before running again
+### 9. ⚠️ Update the Sheet header row before running again
 The script now appends an 8th column (`Email`) after `Date Added`. If
 you've manually added an `Applied` column to the sheet already, **insert a
 new column for `Email` between `Date Added` and `Applied`** before running
@@ -220,7 +264,7 @@ currently sits in that 8th position, silently colliding with your `Applied`
 tracking. Header row should read:
 `URL | Title | Company | Location | Fit Score | Reason | Date Added | Email | Applied`
 
-### 9. Push and test
+### 10. Push and test
 Push this repo to GitHub, then go to Actions → Daily Job Alert → Run workflow
 to trigger it manually and confirm it works before waiting for the 8 AM cron.
 
