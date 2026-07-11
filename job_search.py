@@ -14,7 +14,8 @@ keyword overlap. If Gemini's retries are exhausted (e.g. daily quota),
 falls back to my self-hosted multi-provider AI gateway
 (github.com/rahulxgit/ai-gateway) as a last resort. For jobs that pass,
 tries to find a real recruiter/company email — first from the JD text
-itself, then optionally via Hunter.io — for cold-outreach/referral
+itself, then optionally via Hunter.io, then optionally via Apollo.io (which
+can return a named contact, not just a pattern) — for cold-outreach/referral
 purposes. Jobs with a directly-published contact email get a boost in the
 pre-filter so they survive to Gemini review more reliably, and the final
 list is sorted with contactable jobs first, fit score second — fit is
@@ -127,6 +128,18 @@ LINKEDIN_POST_SEARCH_TERMS = ["hiring software engineer fresher", "hiring sde 1"
 # Gemini's review and don't already have an email found directly in the JD.
 HUNTER_API_KEY = os.environ.get("HUNTER_API_KEY", "")
 HUNTER_MAX_CALLS_PER_RUN = 1  # ~25/month free tier ÷ ~30 daily runs — 15 was blowing the whole month's quota in 2 days
+
+# Optional — only used if APOLLO_API_KEY is set. Final fallback, tried only
+# after both JD-extraction and Hunter come up empty. Apollo's free tier is
+# ~50 credits/month (better than Hunter's ~25) and can return a *named*
+# person (name + title + email) rather than just a generic company
+# pattern — genuinely more useful for a personalized referral ask. Two
+# calls per lookup: a free search (no credit cost) to find a plausible
+# recruiter/HR contact at the company, then one paid enrich call to reveal
+# their email (1 credit).
+APOLLO_API_KEY = os.environ.get("APOLLO_API_KEY", "")
+APOLLO_MAX_CALLS_PER_RUN = 1  # ~50/month free tier ÷ ~30 daily runs — same sustainability logic as Hunter
+APOLLO_TARGET_TITLES = ["Recruiter", "Talent Acquisition", "HR", "Hiring Manager", "Human Resources"]
 
 # Common legal-entity suffixes to strip when guessing a company's domain
 # from its name — imperfect heuristic, Hunter simply returns nothing useful
@@ -1059,6 +1072,57 @@ def hunter_domain_search(domain: str) -> str:
     return ""
 
 
+def apollo_find_contact(company_name: str, domain: str) -> str:
+    """
+    Two-step Apollo lookup: a free search for a plausible recruiter/HR
+    contact at the company, then one credit-costing enrich call to reveal
+    their actual email. Returns a formatted string with name + title when
+    successful, or "" if nothing was found or the API call failed —
+    caller treats both the same way (no email available).
+    """
+    if not domain:
+        return ""
+    try:
+        search_resp = requests.post(
+            "https://api.apollo.io/api/v1/mixed_people/api_search",
+            headers={"X-Api-Key": APOLLO_API_KEY, "Content-Type": "application/json"},
+            json={
+                "q_organization_domains_list": [domain],
+                "person_titles": APOLLO_TARGET_TITLES,
+                "per_page": 1,
+                "page": 1,
+            },
+            timeout=15,
+        )
+        search_resp.raise_for_status()
+        people = search_resp.json().get("people", [])
+        if not people:
+            return ""
+
+        person_id = people[0].get("id", "")
+        if not person_id:
+            return ""
+
+        enrich_resp = requests.post(
+            "https://api.apollo.io/api/v1/people/match",
+            headers={"X-Api-Key": APOLLO_API_KEY, "Content-Type": "application/json"},
+            json={"id": person_id, "reveal_personal_emails": False},
+            timeout=15,
+        )
+        enrich_resp.raise_for_status()
+        person = enrich_resp.json().get("person", {})
+        email = person.get("email", "")
+        if not email:
+            return ""
+
+        name = person.get("name", "")
+        title = person.get("title", "")
+        return f"{email} ({name}, {title}, Apollo)" if name else f"{email} (Apollo)"
+    except Exception as exc:
+        print(f"[warn] apollo lookup failed for '{company_name}' ({domain}): {exc}")
+        return ""
+
+
 def enrich_with_emails(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         df["recruiter_email"] = []
@@ -1067,21 +1131,33 @@ def enrich_with_emails(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     emails = []
     hunter_calls_used = 0
+    apollo_calls_used = 0
 
     for _, row in df.iterrows():
+        company = str(row.get("company", ""))
         jd_email = extract_email_from_text(str(row.get("description", "")))
         if jd_email:
             emails.append(jd_email)
             continue
 
+        found = ""
         if HUNTER_API_KEY and hunter_calls_used < HUNTER_MAX_CALLS_PER_RUN:
-            domain = guess_company_domain(str(row.get("company", "")))
-            found = hunter_domain_search(domain)
+            domain = guess_company_domain(company)
+            hunter_result = hunter_domain_search(domain)
             hunter_calls_used += 1
-            emails.append(f"{found} (generic, Hunter)" if found else "")
+            if hunter_result:
+                found = f"{hunter_result} (generic, Hunter)"
             time.sleep(0.5)
-        else:
-            emails.append("")
+
+        if not found and APOLLO_API_KEY and apollo_calls_used < APOLLO_MAX_CALLS_PER_RUN:
+            domain = guess_company_domain(company)
+            apollo_result = apollo_find_contact(company, domain)
+            apollo_calls_used += 1
+            if apollo_result:
+                found = apollo_result
+            time.sleep(0.5)
+
+        emails.append(found)
 
     df["recruiter_email"] = emails
     return df

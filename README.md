@@ -89,6 +89,14 @@ that's a one-line change whenever it's wanted.
   headers, rate-limit harder, or restructure the response at any time
   without notice. If Naukri listings suddenly drop to zero in the logs,
   this is the first place to check.
+- **Apollo's domain-filter parameter is not 100% verified.** The
+  `q_organization_domains_list` parameter used in `apollo_find_contact` was
+  inferred from general knowledge of Apollo's API rather than a directly
+  confirmed doc example — Apollo's official docs snippets found during
+  development showed `person_titles`/`person_locations` clearly but not
+  the exact domain-filter param name. If Apollo lookups consistently
+  return nothing despite a valid key, this parameter name is the first
+  thing to double-check against Apollo's current API reference.
 - **LinkedIn recruiter-post scraping is optional, off by default, and the
   highest-risk source in this project.** It only activates if
   `LINKEDIN_LI_AT_COOKIE` is set. It uses a real personal session cookie
@@ -232,13 +240,25 @@ If you still want it:
 ### 6. (Optional) Hunter.io key — for a fallback recruiter/company email
 Used only when a job description doesn't already contain a published email
 directly. Real domain-search lookups, not guesses — but the free tier is
-~25 lookups/month, and each run caps itself at 15 calls to avoid burning
-the whole month in one run.
+~25 lookups/month, so each run caps itself at just 1 call to actually last
+the month instead of spiking out in a couple of days.
 
 1. Go to https://hunter.io → sign up free (no card needed for the free tier).
 2. Dashboard → API → copy your API key.
 
-### 7. (Optional) YouTube Data API key — for job-alert channel scraping
+### 7. (Optional) Apollo.io key — final email fallback, tried after Hunter
+Only used if both the JD-extraction and Hunter tiers come up empty. Free
+tier is ~50 credits/month (better than Hunter's), and unlike Hunter's
+generic company-pattern guess, Apollo can return an actual **named**
+person (name + title + email) — genuinely more useful for a personalized
+"Hi [Name]," referral ask. Same sustainability logic: capped at 1 call/run.
+
+1. Go to https://www.apollo.io → sign up free (a work/corporate-style
+   email address tends to go through signup more smoothly than a personal
+   Gmail).
+2. Settings → Integrations → API Keys → create a key. Copy it.
+
+### 8. (Optional) YouTube Data API key — for job-alert channel scraping
 Official free API, no scraping — reads recent videos + descriptions from
 ~21 placement/job-alert YouTube channels (Apna College, Take U Forward,
 PrepInsta, etc.). Free tier is 10,000 units/day, comfortably covers this.
@@ -252,7 +272,7 @@ PrepInsta, etc.). Free tier is 10,000 units/day, comfortably covers this.
    "YouTube Data API v3" under API restrictions, so it can't be misused
    for anything else if it ever leaks.
 
-### 8. GitHub repo secrets
+### 9. GitHub repo secrets
 Repo → Settings → Secrets and variables → Actions → New repository secret:
 
 | Secret name | Value |
@@ -266,10 +286,11 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `GEMINI_API_KEY` | from step 4 |
 | `LINKEDIN_LI_AT_COOKIE` | optional, from step 5 — omit entirely to skip this source |
 | `HUNTER_API_KEY` | optional, from step 6 — omit entirely to skip this fallback |
-| `YOUTUBE_API_KEY` | optional, from step 7 — omit entirely to skip this source |
+| `APOLLO_API_KEY` | optional, from step 7 — omit entirely to skip this fallback |
+| `YOUTUBE_API_KEY` | optional, from step 8 — omit entirely to skip this source |
 | `AI_GATEWAY_URL` | optional — omit entirely to use the default `https://ai-gateway-wx35.onrender.com`; only set this if the gateway is redeployed elsewhere |
 
-### 9. ⚠️ Update the Sheet header row before running again
+### 10. ⚠️ Update the Sheet header row before running again
 The script now appends an 8th column (`Email`) after `Date Added`. If
 you've manually added an `Applied` column to the sheet already, **insert a
 new column for `Email` between `Date Added` and `Applied`** before running
@@ -278,7 +299,7 @@ currently sits in that 8th position, silently colliding with your `Applied`
 tracking. Header row should read:
 `URL | Title | Company | Location | Fit Score | Reason | Date Added | Email | Applied`
 
-### 10. Push and test
+### 11. Push and test
 Push this repo to GitHub, then go to Actions → Daily Job Alert → Run workflow
 to trigger it manually and confirm it works before waiting for the 8 AM cron.
 
@@ -325,19 +346,23 @@ two points, without loosening the quality bar:
    being trimmed purely on keyword/fresher-signal strength.
 2. **Final ordering** — after Gemini review and email-finding, results are
    re-sorted by (has a contact, fit score) instead of fit score alone.
-   Jobs with a found email — whether from the JD directly or the Hunter.io
+   Jobs with a found email — from the JD directly, or either paid-API
    fallback — appear first in both the Sheet and the email digest, marked
    with 📧 in the email. Fit score still breaks ties and is still the
    actual quality gate: a mediocre-fit job with a contact never displaces
    a genuine fit without one, this only reorders what already passed
    review.
 
-The one Hunter.io fallback call available per run (see the quota note
-above) is spent on the **highest-fit job that doesn't already have a
-JD-published email**, since `enrich_with_emails` runs on the
-already fit-sorted list before the final contact-based re-sort — so the
-limited quota goes to the best-fit candidate that needs it most, not
-whichever job happens to be processed first.
+**Email lookup is a three-tier chain**, each tried only if the previous
+one comes up empty: JD-published email (free, most reliable) → Hunter.io
+generic domain pattern (1 call/run) → Apollo.io named-person search (1
+call/run, tried last since it's the most valuable when it hits — an
+actual name + title, not just a pattern guess). Both paid-API tiers are
+spent on the **highest-fit job that doesn't already have an email**, since
+`enrich_with_emails` runs on the already fit-sorted list before the final
+contact-based re-sort — so the limited quota goes to the best-fit
+candidate that needs it most, not whichever job happens to be processed
+first.
 
 ## Self-audit fixes (found by code review, not a test run)
 
