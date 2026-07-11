@@ -6,6 +6,10 @@ on:
     - cron: "30 2 * * *"
   workflow_dispatch: {}  # lets me trigger it manually from the Actions tab
 
+concurrency:
+  group: daily-job-alert
+  cancel-in-progress: false  # let an in-progress run finish rather than duplicating writes
+
 jobs:
   run-job-search:
     runs-on: ubuntu-latest
@@ -33,4 +37,5 @@ jobs:
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           LINKEDIN_LI_AT_COOKIE: ${{ secrets.LINKEDIN_LI_AT_COOKIE }}
+          HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
         run: python job_search.py

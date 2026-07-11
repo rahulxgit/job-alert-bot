@@ -8,8 +8,10 @@ LinkedIn recruiter-post scraping (cookie-gated), and company career pages
 via Greenhouse/Lever public APIs. Runs a cheap keyword pre-filter to cut
 the list down, then sends the survivors to the Gemini API to actually read
 each job description against my resume and decide real fit — not just
-keyword overlap. Logs matches to a Google Sheet so I don't see repeats, and
-emails me the digest.
+keyword overlap. For jobs that pass, tries to find a real recruiter/company
+email — first from the JD text itself, then optionally via Hunter.io — for
+cold-outreach/referral purposes. Logs matches to a Google Sheet so I don't
+see repeats, and emails me the digest.
 
 Run manually with:  python job_search.py
 Runs automatically every day at 8 AM IST via .github/workflows/job-alerts.yml
@@ -18,6 +20,7 @@ Runs automatically every day at 8 AM IST via .github/workflows/job-alerts.yml
 import base64
 import json
 import os
+import re
 import time
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -108,6 +111,22 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 # (see fetch_linkedin_posts_listings below). Leave unset to skip it entirely.
 LINKEDIN_LI_AT_COOKIE = os.environ.get("LINKEDIN_LI_AT_COOKIE", "")
 LINKEDIN_POST_SEARCH_TERMS = ["hiring software engineer fresher", "hiring sde 1", "hiring full stack developer"]
+
+# Optional — only used if HUNTER_API_KEY is set. Free tier is ~25
+# lookups/month, so this is capped hard per run to avoid burning the whole
+# monthly quota on one day's jobs. Only called for jobs that already passed
+# Gemini's review and don't already have an email found directly in the JD.
+HUNTER_API_KEY = os.environ.get("HUNTER_API_KEY", "")
+HUNTER_MAX_CALLS_PER_RUN = 15
+
+# Common legal-entity suffixes to strip when guessing a company's domain
+# from its name — imperfect heuristic, Hunter simply returns nothing useful
+# if the guess is wrong, which is handled gracefully.
+COMPANY_SUFFIXES_TO_STRIP = [
+    " pvt ltd", " pvt. ltd.", " private limited", " limited", " llp",
+    " inc.", " inc", " llc", " technologies", " technology", " labs",
+    " solutions", " services", " systems", " india", " co.", " ltd",
+]
 
 PROFILE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "profile-data.json")
 
@@ -704,6 +723,90 @@ def llm_filter(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Stage 3 — find a recruiter/company email for outreach, on the final
+# shortlist only (small, already Gemini-approved, so cheap to enrich).
+#
+# Two tiers, both real — no fabricated emails ever:
+#   1. Regex-extract an email already published directly in the JD text.
+#      This is the most reliable signal: if a recruiter put their own email
+#      in the posting, it's meant for exactly this purpose.
+#   2. Optional fallback via Hunter.io (only if HUNTER_API_KEY is set): a
+#      real domain-search lookup, hard-capped per run to protect the free
+#      tier's monthly quota. Labeled "generic (Hunter)" in the sheet since
+#      it's a company-level pattern match, not confirmation this is the
+#      specific recruiter who posted this specific job.
+# ---------------------------------------------------------------------------
+
+EMAIL_REGEX = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+
+
+def extract_email_from_text(text: str) -> str:
+    if not text:
+        return ""
+    match = EMAIL_REGEX.search(text)
+    return match.group(0) if match else ""
+
+
+def guess_company_domain(company_name: str) -> str:
+    name = (company_name or "").lower().strip()
+    for suffix in COMPANY_SUFFIXES_TO_STRIP:
+        name = name.replace(suffix, "")
+    name = re.sub(r"[^a-z0-9]", "", name)
+    return f"{name}.com" if name else ""
+
+
+def hunter_domain_search(domain: str) -> str:
+    if not domain:
+        return ""
+    try:
+        resp = requests.get(
+            "https://api.hunter.io/v2/domain-search",
+            params={"domain": domain, "api_key": HUNTER_API_KEY, "limit": 1},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        emails = data.get("data", {}).get("emails", [])
+        if emails:
+            return emails[0].get("value", "")
+        # fall back to the generic pattern Hunter infers even with no confirmed emails
+        pattern = data.get("data", {}).get("pattern", "")
+        if pattern:
+            return f"(pattern: {pattern}@{domain})"
+    except Exception as exc:
+        print(f"[warn] hunter.io lookup failed for '{domain}': {exc}")
+    return ""
+
+
+def enrich_with_emails(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        df["recruiter_email"] = []
+        return df
+
+    df = df.copy()
+    emails = []
+    hunter_calls_used = 0
+
+    for _, row in df.iterrows():
+        jd_email = extract_email_from_text(str(row.get("description", "")))
+        if jd_email:
+            emails.append(jd_email)
+            continue
+
+        if HUNTER_API_KEY and hunter_calls_used < HUNTER_MAX_CALLS_PER_RUN:
+            domain = guess_company_domain(str(row.get("company", "")))
+            found = hunter_domain_search(domain)
+            hunter_calls_used += 1
+            emails.append(f"{found} (generic, Hunter)" if found else "")
+            time.sleep(0.5)
+        else:
+            emails.append("")
+
+    df["recruiter_email"] = emails
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Google Sheets — dedup log
 # ---------------------------------------------------------------------------
 
@@ -733,6 +836,7 @@ def log_new_jobs(sheet, df: pd.DataFrame):
             int(row.get("fit_score") or 0),
             str(row.get("reason") or ""),
             datetime.now().strftime("%Y-%m-%d %H:%M"),
+            str(row.get("recruiter_email") or ""),
         ]
         for _, row in df.iterrows()
     ]
@@ -761,10 +865,13 @@ def build_email_body(df: pd.DataFrame) -> str:
 
     lines = [f"{len(df)} new job(s) matched today (Gemini-reviewed):\n"]
     for _, row in df.iterrows():
+        email = row.get("recruiter_email") or ""
+        email_line = f"  Contact: {email}\n" if email else ""
         lines.append(
             f"- {row.get('title')} @ {row.get('company')} ({row.get('location')}) "
             f"— fit {row.get('fit_score')}/100\n"
             f"  Why: {row.get('reason')}\n"
+            f"{email_line}"
             f"  {row.get('job_url')}\n"
         )
     return "\n".join(lines)
@@ -835,6 +942,19 @@ def main():
 
     reviewed = llm_filter(unseen_shortlist)
     print(f"{len(reviewed)} passed Gemini's fit review (score >= {LLM_FIT_THRESHOLD})")
+
+    # Defensive re-check: re-read the sheet right before writing and drop
+    # anything that landed there since we first checked (e.g. an overlapping
+    # run). Cheap insurance against duplicate rows beyond the concurrency
+    # guard in the workflow itself.
+    reviewed = reviewed.drop_duplicates(subset=["job_url"])
+    latest_seen = get_seen_urls(sheet)
+    reviewed = reviewed[~reviewed["job_url"].isin(latest_seen)]
+
+    print("Looking for recruiter/company emails on the final shortlist...")
+    reviewed = enrich_with_emails(reviewed)
+    found_count = (reviewed["recruiter_email"] != "").sum()
+    print(f"  found an email for {found_count}/{len(reviewed)} jobs")
 
     log_new_jobs(sheet, reviewed)
 

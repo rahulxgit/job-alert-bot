@@ -170,7 +170,16 @@ If you still want it:
 4. This value is as sensitive as a password — it grants access to your
    account session. Treat it accordingly.
 
-### 6. GitHub repo secrets
+### 6. (Optional) Hunter.io key — for a fallback recruiter/company email
+Used only when a job description doesn't already contain a published email
+directly. Real domain-search lookups, not guesses — but the free tier is
+~25 lookups/month, and each run caps itself at 15 calls to avoid burning
+the whole month in one run.
+
+1. Go to https://hunter.io → sign up free (no card needed for the free tier).
+2. Dashboard → API → copy your API key.
+
+### 7. GitHub repo secrets
 Repo → Settings → Secrets and variables → Actions → New repository secret:
 
 | Secret name | Value |
@@ -183,8 +192,18 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `ALERT_EMAIL_TO` | rahulkumarshc00@gmail.com |
 | `GEMINI_API_KEY` | from step 4 |
 | `LINKEDIN_LI_AT_COOKIE` | optional, from step 5 — omit entirely to skip this source |
+| `HUNTER_API_KEY` | optional, from step 6 — omit entirely to skip this fallback |
 
-### 7. Push and test
+### 8. ⚠️ Update the Sheet header row before running again
+The script now appends an 8th column (`Email`) after `Date Added`. If
+you've manually added an `Applied` column to the sheet already, **insert a
+new column for `Email` between `Date Added` and `Applied`** before running
+again — otherwise new rows will write recruiter emails into whatever column
+currently sits in that 8th position, silently colliding with your `Applied`
+tracking. Header row should read:
+`URL | Title | Company | Location | Fit Score | Reason | Date Added | Email | Applied`
+
+### 9. Push and test
 Push this repo to GitHub, then go to Actions → Daily Job Alert → Run workflow
 to trigger it manually and confirm it works before waiting for the 8 AM cron.
 
