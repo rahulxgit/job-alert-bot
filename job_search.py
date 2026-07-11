@@ -1,8 +1,9 @@
 """
 Daily job alert bot.
 
-Pulls fresher/SDE-1 listings from Indeed, LinkedIn, Google Jobs, Glassdoor,
-and ZipRecruiter (via jobspy), Internshala (paid internships, all-India),
+Pulls fresher/SDE-1 listings from Indeed, LinkedIn, Google Jobs (via
+jobspy — Glassdoor and ZipRecruiter were tried and removed, both fully
+blocked from GitHub Actions), Internshala (paid internships, all-India),
 Naukri (via their internal search API), Wellfound (best-effort), optional
 LinkedIn recruiter-post scraping (cookie-gated), and company career pages
 via Greenhouse/Lever public APIs. Runs a cheap keyword pre-filter to cut
@@ -46,7 +47,7 @@ SEARCH_TERMS = [
 ]
 
 LOCATIONS = ["Bengaluru, India", "India"]
-SITES = ["indeed", "linkedin", "google", "glassdoor", "zip_recruiter"]
+SITES = ["indeed", "linkedin", "google"]  # glassdoor/zip_recruiter removed — confirmed 100% blocked from Actions, see README
 RESULTS_PER_SITE = 30
 HOURS_OLD = 24
 
@@ -242,10 +243,15 @@ def fetch_jobspy_listings() -> pd.DataFrame:
 
 def fetch_internshala_listings() -> pd.DataFrame:
     """
-    Internshala's search pages are plain server-rendered HTML, so a simple
-    request + BeautifulSoup parse works without a browser. We only keep
-    listings that explicitly show a paid stipend — unpaid internships are
-    dropped right here before anything else touches them.
+    Internshala's search pages are server-rendered HTML, so a simple
+    request + BeautifulSoup parse works without a browser — confirmed by
+    directly fetching a live search page. Rather than trust a specific CSS
+    class (which broke once already when Internshala's markup shifted),
+    this anchors on the '/internship/detail/' URL pattern, which is a much
+    more stable contract — Internshala can restyle the page freely without
+    breaking this. We only keep listings that don't explicitly say
+    "Unpaid" nearby — unpaid internships are dropped before anything else
+    touches them.
     """
     rows = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -260,31 +266,42 @@ def fetch_internshala_listings() -> pd.DataFrame:
             continue
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        cards = soup.select("div.individual_internship")
+        detail_links = soup.select('a[href*="/internship/detail/"]')
 
-        for card in cards:
-            title_el = card.select_one("h3.job-internship-name a")
-            company_el = card.select_one("p.company-name")
-            stipend_el = card.select_one("span.stipend")
-            location_el = card.select_one("a.location_link")
-
-            if not title_el:
+        seen_urls_this_page = set()
+        for link_el in detail_links:
+            title = link_el.get_text(strip=True)
+            href = link_el.get("href", "")
+            if not title or not href:
                 continue
 
-            stipend_text = stipend_el.get_text(strip=True) if stipend_el else ""
-            # Internshala marks unpaid ones explicitly — skip those outright
-            if "unpaid" in stipend_text.lower():
-                continue
+            full_url = f"https://internshala.com{href}" if href.startswith("/") else href
+            if full_url in seen_urls_this_page:
+                continue  # the title often appears as both a heading link and thumbnail link
+            seen_urls_this_page.add(full_url)
 
-            link = title_el.get("href", "")
-            full_url = f"https://internshala.com{link}" if link.startswith("/") else link
+            # Walk up to a reasonably-sized container to pull surrounding
+            # context (stipend, location) without depending on exact class names.
+            container = link_el.find_parent(["div", "li"])
+            for _ in range(3):
+                if container is None:
+                    break
+                text = container.get_text(" ", strip=True)
+                if "₹" in text or "unpaid" in text.lower():
+                    break
+                container = container.find_parent(["div", "li"])
+
+            context_text = container.get_text(" ", strip=True) if container else ""
+
+            if "unpaid" in context_text.lower():
+                continue  # drop unpaid internships before anything else touches them
 
             rows.append({
                 "job_url": full_url,
-                "title": title_el.get_text(strip=True),
-                "company": company_el.get_text(strip=True) if company_el else "",
-                "location": location_el.get_text(strip=True) if location_el else "India",
-                "description": f"Internship. Stipend: {stipend_text}",
+                "title": title,
+                "company": "",  # not reliably separable from context without a stable class; left blank rather than guessed wrong
+                "location": "India",
+                "description": context_text[:500] if context_text else title,
             })
 
         time.sleep(1)  # be polite between requests
@@ -308,8 +325,10 @@ def fetch_naukri_listings() -> pd.DataFrame:
     """
     rows = []
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.naukri.com/software-developer-fresher-jobs",
         "appid": "109",
         "systemid": "Naukri",
         "clientid": "d3skt0p",
@@ -482,12 +501,17 @@ def fetch_linkedin_posts_listings() -> pd.DataFrame:
     }
 
     try:
-        session.get("https://www.linkedin.com/feed/", headers=headers, timeout=15)
+        session.get("https://www.linkedin.com/feed/", headers=headers, timeout=15, allow_redirects=True)
         jsessionid = session.cookies.get("JSESSIONID", "").strip('"')
         if not jsessionid:
             print("[warn] linkedin posts: no JSESSIONID received — cookie likely expired or invalid")
             return pd.DataFrame()
         headers["csrf-token"] = jsessionid
+    except requests.exceptions.TooManyRedirects:
+        print("[warn] linkedin posts: too many redirects — this means LINKEDIN_LI_AT_COOKIE is expired or "
+              "invalid (LinkedIn keeps bouncing to the login page). Get a fresh li_at cookie value and "
+              "update the secret.")
+        return pd.DataFrame()
     except Exception as exc:
         print(f"[warn] linkedin posts: session init failed: {exc}")
         return pd.DataFrame()
@@ -658,8 +682,13 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_M
 def llm_evaluate_job(title: str, company: str, description: str) -> dict:
     """
     Returns {"fit_score": int 0-100, "is_fresher_appropriate": bool, "reason": str}
-    Falls back to a safe "skip" result if the API call fails, so one bad
-    call doesn't crash the whole run.
+    Falls back to a safe "skip" result if the API call fails after retries,
+    so one bad call doesn't crash the whole run.
+
+    Retries specifically on 429 (rate limit) with exponential backoff, since
+    free-tier Gemini can hit per-minute limits even with pacing between
+    calls. Note: if the free tier's *daily* quota is exhausted (not just a
+    per-minute burst), retries won't help — that only resets the next day.
     """
     prompt = f"""Here is a candidate's background:
 
@@ -677,23 +706,40 @@ similar, and reject unpaid internships. Respond with ONLY a JSON object, no
 other text, in this exact shape:
 {{"fit_score": <0-100 integer>, "is_fresher_appropriate": <true/false>, "reason": "<one sentence>"}}"""
 
-    try:
-        resp = requests.post(
-            GEMINI_URL,
-            headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
-            json={
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0, "maxOutputTokens": 200},
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        return json.loads(text)
-    except Exception as exc:
-        print(f"[warn] LLM evaluation failed for '{title}' @ '{company}': {exc}")
-        return {"fit_score": 0, "is_fresher_appropriate": False, "reason": "evaluation failed"}
+    max_retries = 3
+    backoff_seconds = 15
+
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.post(
+                GEMINI_URL,
+                headers={"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"},
+                json={
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0, "maxOutputTokens": 200},
+                },
+                timeout=30,
+            )
+            if resp.status_code == 429:
+                if attempt < max_retries:
+                    wait = int(resp.headers.get("Retry-After", backoff_seconds * (attempt + 1)))
+                    print(f"[warn] rate limited on '{title}' — retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait)
+                    continue
+                else:
+                    print(f"[warn] '{title}' @ '{company}' still rate-limited after {max_retries} retries — "
+                          f"likely the daily free-tier quota is exhausted, not just a burst")
+                    return {"fit_score": 0, "is_fresher_appropriate": False, "reason": "rate limited — not evaluated"}
+
+            resp.raise_for_status()
+            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            return json.loads(text)
+        except Exception as exc:
+            print(f"[warn] LLM evaluation failed for '{title}' @ '{company}': {exc}")
+            return {"fit_score": 0, "is_fresher_appropriate": False, "reason": "evaluation failed"}
+
+    return {"fit_score": 0, "is_fresher_appropriate": False, "reason": "evaluation failed"}
 
 
 def llm_filter(df: pd.DataFrame) -> pd.DataFrame:

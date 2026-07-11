@@ -1,12 +1,15 @@
 # Job Alert Bot
 
-Scrapes Indeed, LinkedIn, Google Jobs, Glassdoor, ZipRecruiter, Internshala
-(all-India), Naukri, (best-effort) Wellfound, optional LinkedIn recruiter
-posts, and Greenhouse/Lever company career pages every morning, runs a cheap
-keyword pre-filter, then sends the shortlist to Gemini (free tier) to
-actually read each job description against my resume and decide real fit —
-not just keyword overlap. Logs new matches to a Google Sheet and emails me
-the digest. Runs on GitHub Actions so it doesn't depend on my laptop being on.
+Scrapes Indeed, LinkedIn, Google Jobs, Internshala (all-India), Naukri,
+(best-effort) Wellfound, optional LinkedIn recruiter posts, and
+Greenhouse/Lever company career pages every morning. (Glassdoor and
+ZipRecruiter were tried and removed — both are fully blocked from GitHub
+Actions, see limitations below.) Runs a cheap keyword pre-filter, then
+sends the shortlist to Gemini (free tier) to actually read each job
+description against my resume and decide real fit — not just keyword
+overlap. For jobs that pass, tries to find a real recruiter/company email
+for outreach. Logs new matches to a Google Sheet and emails me the digest.
+Runs on GitHub Actions so it doesn't depend on my laptop being on.
 
 ## How it fits together
 
@@ -15,7 +18,7 @@ GitHub Actions (cron, 8 AM IST)
         ↓
 job_search.py
         ↓
-jobspy scrapes Indeed + LinkedIn + Google Jobs + Glassdoor + ZipRecruiter
+jobspy scrapes Indeed + LinkedIn + Google Jobs
         +
 custom scraper pulls paid internships from Internshala (all-India)
         +
@@ -89,9 +92,13 @@ that's a one-line change whenever it's wanted.
   knowingly. If it ever causes account trouble, delete the
   `LINKEDIN_LI_AT_COOKIE` secret — the source turns itself off with no
   other changes needed, and everything else keeps working.
-- **ZipRecruiter is primarily a US job board** — added since jobspy supports
-  it trivially, but expect little to no real India coverage from it. Kept
-  in mainly because it's zero extra cost/risk to include.
+- **Glassdoor and ZipRecruiter were tried and removed.** Confirmed via real
+  run logs: Glassdoor's jobspy scraper can't parse Indian locations and
+  gets a 400/403 on every single call; ZipRecruiter is blocked outright by
+  Cloudflare's WAF (403 `forbidden cf-waf`) from GitHub Actions' IPs on
+  every call. Neither returned a single listing across multiple runs, so
+  both were removed from `SITES` rather than left in as dead weight. If
+  jobspy ever fixes the Glassdoor location bug, it could be worth re-adding.
 - **Company career pages only cover Greenhouse/Lever-based companies.**
   Postman is confirmed working (`GREENHOUSE_BOARDS`). Many Indian product
   companies (Flipkart, Swiggy, Zomato, etc.) run custom in-house career
@@ -105,10 +112,20 @@ that's a one-line change whenever it's wanted.
   similar to Wellfound's situation — reliably scraping them would need the
   same guesswork/uncertainty as the Wellfound attempt, and this was
   deliberately skipped as not worth the uncertain payoff.
+- **Gemini free-tier rate limits are stricter than they first appear.**
+  The script paces calls 4.5s apart and retries on 429 with backoff, but
+  if you trigger several manual runs back-to-back on the same day (e.g.
+  while testing changes), you can exhaust the *daily* free quota, not
+  just the per-minute one — retries can't fix that, only the next day's
+  reset can. If a run comes back with almost everything failing on 429
+  despite retries, that's very likely same-day quota exhaustion from
+  earlier testing, not a bug. Avoid triggering many full manual runs in
+  one day while iterating; let the daily cron do most of the real runs.
 - The Gemini review step calls the API once per shortlisted job (up to 55
-  calls/run, paced ~4.5s apart to respect free-tier rate limits) — this is
-  free but means a run can take several minutes, longer now with more
-  sources feeding in (25-minute workflow timeout to accommodate this).
+  calls/run, paced ~4.5s apart to respect free-tier rate limits, with
+  automatic retry-with-backoff on 429s) — this is free but means a run can
+  take several minutes, longer now with more sources feeding in (25-minute
+  workflow timeout to accommodate this).
 
 ## One-time setup
 
