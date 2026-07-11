@@ -313,6 +313,26 @@ to trigger it manually and confirm it works before waiting for the 8 AM cron.
   every day means that source needs attention) without needing to open
   the Action logs each time.
 
+## Self-audit fixes (found by code review, not a test run)
+
+- **`HUNTER_MAX_CALLS_PER_RUN` was set to 15, but Hunter's free tier is
+  ~25/month total.** Running daily, that would have exhausted the entire
+  month's quota in under 2 days, then silently returned nothing for the
+  rest of the month. Fixed to 1/run — a genuinely sustainable pace that
+  actually lasts the month instead of spiking and going dark.
+- **YouTube channel resolution had no sanity check.** Several channel names
+  in the list are generic words (`Unstop`, `Scaler`, `Freshers Now`,
+  `College Wallah`) where YouTube's search could plausibly match an
+  unrelated channel, and this would have happened silently — pulling the
+  wrong channel's videos every day with no indication anything was wrong.
+  Now logs a clear `[warn]` if the resolved channel's title doesn't share
+  any meaningful word with the name it was searched for.
+- **Wellfound's `__NEXT_DATA__` parser had no recursion depth limit.**
+  Next.js state can nest deeply; without a cap this risked either a
+  `RecursionError` (caught gracefully, but still wasted the attempt) or
+  just running slowly on a large page, eating into the run's time budget.
+  Capped at depth 25.
+
 ## Known Sheet setup issue
 
 If your Sheet's header row still reads `Score | Fit` instead of

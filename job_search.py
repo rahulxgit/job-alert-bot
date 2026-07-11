@@ -122,7 +122,7 @@ LINKEDIN_POST_SEARCH_TERMS = ["hiring software engineer fresher", "hiring sde 1"
 # monthly quota on one day's jobs. Only called for jobs that already passed
 # Gemini's review and don't already have an email found directly in the JD.
 HUNTER_API_KEY = os.environ.get("HUNTER_API_KEY", "")
-HUNTER_MAX_CALLS_PER_RUN = 15
+HUNTER_MAX_CALLS_PER_RUN = 1  # ~25/month free tier ÷ ~30 daily runs — 15 was blowing the whole month's quota in 2 days
 
 # Common legal-entity suffixes to strip when guessing a company's domain
 # from its name — imperfect heuristic, Hunter simply returns nothing useful
@@ -415,26 +415,30 @@ def fetch_naukri_listings() -> pd.DataFrame:
 WELLFOUND_ROLE_SLUGS = ["software-engineer", "full-stack-engineer", "backend-engineer"]
 
 
-def _find_job_like_dicts(node, found=None):
+def _find_job_like_dicts(node, found=None, depth=0, max_depth=25):
     """
     Recursively walks Wellfound's embedded __NEXT_DATA__ state looking for
     anything that looks like a job listing. We don't hardcode exact key
     paths here because Wellfound's internal schema isn't public and can
     shift — instead we duck-type: any dict with a title-like field and a
-    slug/id gets treated as a candidate listing.
+    slug/id gets treated as a candidate listing. Depth-capped since Next.js
+    state can nest deeply, and this should stay fast rather than risk
+    eating into the run's time budget on a huge page.
     """
     if found is None:
         found = []
+    if depth > max_depth:
+        return found
     if isinstance(node, dict):
         has_title = any(k in node for k in ("title", "jobTitle"))
         has_identifier = any(k in node for k in ("slug", "jobListingSlug", "id"))
         if has_title and has_identifier:
             found.append(node)
         for value in node.values():
-            _find_job_like_dicts(value, found)
+            _find_job_like_dicts(value, found, depth + 1, max_depth)
     elif isinstance(node, list):
         for item in node:
-            _find_job_like_dicts(item, found)
+            _find_job_like_dicts(item, found, depth + 1, max_depth)
     return found
 
 
@@ -691,8 +695,21 @@ def youtube_resolve_channel_id(channel_name: str) -> str:
         )
         resp.raise_for_status()
         items = resp.json().get("items", [])
-        if items:
-            return items[0]["snippet"]["channelId"]
+        if not items:
+            return ""
+
+        resolved_title = items[0]["snippet"].get("title", "")
+        # Sanity check: for generic/ambiguous names (Unstop, Scaler, Freshers
+        # Now, etc.), YouTube's top search result could easily be an
+        # unrelated channel. Flag it loudly rather than silently trusting a
+        # possibly-wrong match — better to know than to quietly pull the
+        # wrong channel's videos every day.
+        significant_words = [w for w in channel_name.lower().split() if len(w) > 2]
+        if significant_words and not any(w in resolved_title.lower() for w in significant_words):
+            print(f"[warn] youtube: '{channel_name}' resolved to '{resolved_title}' — "
+                  f"this looks like it might be the WRONG channel, worth checking manually")
+
+        return items[0]["snippet"]["channelId"]
     except Exception as exc:
         print(f"[warn] youtube: couldn't resolve channel '{channel_name}': {exc}")
     return ""
