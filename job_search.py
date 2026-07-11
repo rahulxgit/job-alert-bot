@@ -742,23 +742,48 @@ other text, in this exact shape:
     return {"fit_score": 0, "is_fresher_appropriate": False, "reason": "evaluation failed"}
 
 
+CONSECUTIVE_RATE_LIMIT_BREAKER = 5  # stop early after this many in a row fail with 429 even after retries
+
+
 def llm_filter(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
 
     results = []
-    for _, row in df.iterrows():
+    consecutive_rate_limits = 0
+    evaluated_rows = []
+
+    for idx, row in df.iterrows():
         verdict = llm_evaluate_job(
             str(row.get("title", "")),
             str(row.get("company", "")),
             str(row.get("description", "")),
         )
         results.append(verdict)
+        evaluated_rows.append(idx)
+
+        if verdict.get("reason") == "rate limited — not evaluated":
+            consecutive_rate_limits += 1
+        else:
+            consecutive_rate_limits = 0
+
+        if consecutive_rate_limits >= CONSECUTIVE_RATE_LIMIT_BREAKER:
+            remaining = len(df) - len(evaluated_rows)
+            print(f"[warn] {CONSECUTIVE_RATE_LIMIT_BREAKER} candidates in a row hit the rate limit even "
+                  f"after retries — this strongly suggests today's Gemini free-tier daily quota is "
+                  f"exhausted, not a transient burst. Stopping here rather than burning the rest of the "
+                  f"run's time budget retrying a dead wall. {remaining} candidates were left unevaluated "
+                  f"and will be picked up automatically on the next run, since they were never logged.")
+            break
+
         # Free-tier Gemini is rate-limited (~15 req/min on Flash-Lite) —
         # pace calls to stay comfortably under that instead of racing into 429s
         time.sleep(4.5)
 
-    df = df.copy()
+    # Only score the rows we actually attempted — anything left unevaluated
+    # after an early break stays out of the sheet entirely, so it's picked
+    # up fresh next run instead of being wrongly marked as reviewed-and-rejected.
+    df = df.loc[evaluated_rows].copy()
     df["fit_score"] = [r["fit_score"] for r in results]
     df["fresher_appropriate"] = [r["is_fresher_appropriate"] for r in results]
     df["reason"] = [r["reason"] for r in results]
@@ -905,11 +930,18 @@ def get_gmail_service():
     return build("gmail", "v1", credentials=creds)
 
 
-def build_email_body(df: pd.DataFrame) -> str:
-    if df.empty:
-        return "No new matching listings today."
+def build_email_body(df: pd.DataFrame, source_counts: dict = None) -> str:
+    lines = []
 
-    lines = [f"{len(df)} new job(s) matched today (Gemini-reviewed):\n"]
+    if source_counts:
+        health_line = " | ".join(f"{name}: {count}" for name, count in source_counts.items())
+        lines.append(f"Sources today — {health_line}\n")
+
+    if df.empty:
+        lines.append("No new matching listings today.")
+        return "\n".join(lines)
+
+    lines.append(f"{len(df)} new job(s) matched today (Gemini-reviewed):\n")
     for _, row in df.iterrows():
         email = row.get("recruiter_email") or ""
         email_line = f"  Contact: {email}\n" if email else ""
@@ -962,6 +994,15 @@ def main():
     lever_df = fetch_lever_listings()
     print(f"  {len(greenhouse_df) + len(lever_df)} listings")
 
+    source_counts = {
+        "Indeed/LinkedIn/Google": len(jobspy_df),
+        "Internshala": len(internshala_df),
+        "Naukri": len(naukri_df),
+        "Wellfound": len(wellfound_df),
+        "LinkedIn posts": len(linkedin_posts_df),
+        "Career pages": len(greenhouse_df) + len(lever_df),
+    }
+
     raw_jobs = pd.concat(
         [jobspy_df, internshala_df, naukri_df, wellfound_df, linkedin_posts_df,
          greenhouse_df, lever_df],
@@ -975,6 +1016,8 @@ def main():
 
     if shortlist.empty:
         print("Nothing to review — no matches today.")
+        gmail = get_gmail_service()
+        send_email(gmail, build_email_body(pd.DataFrame(), source_counts), 0)
         return
 
     sheet = get_sheet()
@@ -984,6 +1027,8 @@ def main():
 
     if unseen_shortlist.empty:
         print("Everything in the shortlist was already logged before — nothing new to review.")
+        gmail = get_gmail_service()
+        send_email(gmail, build_email_body(pd.DataFrame(), source_counts), 0)
         return
 
     reviewed = llm_filter(unseen_shortlist)
@@ -1005,7 +1050,7 @@ def main():
     log_new_jobs(sheet, reviewed)
 
     gmail = get_gmail_service()
-    body = build_email_body(reviewed)
+    body = build_email_body(reviewed, source_counts)
     send_email(gmail, body, len(reviewed))
     print("Email sent.")
 

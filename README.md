@@ -238,10 +238,22 @@ to trigger it manually and confirm it works before waiting for the 8 AM cron.
   warning rather than crashing.
 - `LLM_FIT_THRESHOLD` (currently 60) controls how strict Gemini's review is.
   Raise it if the digest is too noisy, lower it if too sparse.
-- `MAX_LLM_CANDIDATES` (currently 40) caps how many jobs get sent to Gemini
+- `MAX_LLM_CANDIDATES` (currently 55) caps how many jobs get sent to Gemini
   per run — kept conservative to stay within free-tier rate limits (roughly
   15 requests/minute on Flash-Lite). The script paces calls 4.5s apart to
   avoid 429 errors; raising the candidate cap will make the run take longer.
+- **Rate-limit circuit breaker**: if `CONSECUTIVE_RATE_LIMIT_BREAKER`
+  (currently 5) candidates in a row fail with 429 even after retries, the
+  run stops evaluating further candidates instead of retrying every
+  remaining one — this protects against a genuine daily-quota exhaustion
+  turning into a 25-minute timeout that saves nothing. Anything left
+  unevaluated when this triggers is never logged, so it's automatically
+  reconsidered fresh on the next run.
+- **The bot always sends an email now, even on a 0-match day** — including
+  a "Sources today" line showing how many raw listings each source
+  returned. This makes source outages visible at a glance (e.g. "Naukri: 0"
+  every day means that source needs attention) without needing to open
+  the Action logs each time.
 
 ## Known Sheet setup issue
 
