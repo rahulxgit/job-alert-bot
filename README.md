@@ -148,10 +148,11 @@ that's a one-line change whenever it's wanted.
   single video description. Gemini reviews the video as a whole rather
   than each opening separately, so a video with one great match buried
   among five irrelevant ones might not score as highly as it should.
-  Channel name → channel ID resolution also happens via a live YouTube
-  search each run (not hardcoded), so a channel with an ambiguous or
-  common name could occasionally resolve to the wrong result — worth
-  spot-checking `YOUTUBE_CHANNEL_NAMES` results in the logs occasionally.
+  Channel resolution is URL-based and deterministic now (see step 8 in
+  setup) — `/channel/` and `/@handle` links resolve exactly, with no
+  fuzzy-matching risk. Legacy `/c/` or `/user/` URLs still fall back to a
+  name search and carry the old mismatch risk, so prefer `/@handle` or
+  `/channel/` links when adding a channel.
 - **Gemini free-tier rate limits are stricter than they first appear —
   but now there's a real fallback.** The script paces calls 4.5s apart and
   retries on 429 with backoff; if that's still exhausted (e.g. same-day
@@ -260,8 +261,8 @@ person (name + title + email) — genuinely more useful for a personalized
 
 ### 8. (Optional) YouTube Data API key — for job-alert channel scraping
 Official free API, no scraping — reads recent videos + descriptions from
-~21 placement/job-alert YouTube channels (Apna College, Take U Forward,
-PrepInsta, etc.). Free tier is 10,000 units/day, comfortably covers this.
+placement/job-alert YouTube channels. Free tier is 10,000 units/day,
+comfortably covers this.
 
 1. In the same Google Cloud project as steps 2-4, go to
    https://console.cloud.google.com/apis/library/youtube.googleapis.com
@@ -271,6 +272,24 @@ PrepInsta, etc.). Free tier is 10,000 units/day, comfortably covers this.
 3. (Recommended) Click into the new key → restrict it to only the
    "YouTube Data API v3" under API restrictions, so it can't be misused
    for anything else if it ever leaks.
+
+Two independent lists at the top of `job_search.py`, both starting empty
+until real URLs are added — currently configured:
+
+- **`YOUTUBE_CHANNEL_URLS`** — scans each channel's recent uploads
+  (last 48h, up to `YOUTUBE_MAX_VIDEOS_PER_CHANNEL` = 3 latest videos per
+  channel). Currently 9 channels: KN Academy, Anu Sharma, Lokesh Bagora,
+  OnlineStudy4u, learningwithram1299, hiremeplz, ashishcode, Foundthejob,
+  HireWithHarsh. Direct `/@handle` or `/channel/` links resolve
+  deterministically and cheaply; avoid legacy `/c/` or `/user/` URLs
+  where possible since those fall back to a fuzzy name search instead.
+- **`YOUTUBE_VIDEO_URLS`** — checks specific individual videos directly
+  (not a whole channel), e.g. a one-off video someone shared. Currently
+  empty. Cheaper than the channel path since there's no resolution step —
+  one API call per video. Whatever's in this list gets re-checked every
+  run, but the existing job-URL dedup means an already-logged video's job
+  never gets written to the sheet twice, so it's safe to leave old video
+  URLs in this list indefinitely.
 
 ### 9. GitHub repo secrets
 Repo → Settings → Secrets and variables → Actions → New repository secret:

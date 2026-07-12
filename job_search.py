@@ -7,11 +7,12 @@ blocked from GitHub Actions), Internshala (paid internships, all-India),
 Naukri (via their internal search API), Wellfound (best-effort), optional
 LinkedIn recruiter-post scraping (cookie-gated), company career pages via
 Greenhouse/Lever public APIs, and optional YouTube job-alert channels (via
-the official YouTube Data API, key-gated). Runs a cheap keyword pre-filter
-to cut the list down, then sends the survivors to Gemini to actually read
-each job description against my resume and decide real fit — not just
-keyword overlap. If Gemini's retries are exhausted (e.g. daily quota),
-falls back to my self-hosted multi-provider AI gateway
+the official YouTube Data API, key-gated — configured with real channel
+URLs, resolved directly rather than fuzzy-searched by name). Runs a cheap
+keyword pre-filter to cut the list down, then sends the survivors to
+Gemini to actually read each job description against my resume and decide
+real fit — not just keyword overlap. If Gemini's retries are exhausted
+(e.g. daily quota), falls back to my self-hosted multi-provider AI gateway
 (github.com/rahulxgit/ai-gateway) as a last resort. For jobs that pass,
 tries to find a real recruiter/company email — first from the JD text
 itself, then optionally via Hunter.io, then optionally via Apollo.io (which
@@ -152,21 +153,43 @@ COMPANY_SUFFIXES_TO_STRIP = [
 ]
 
 # Optional — only used if YOUTUBE_API_KEY is set. Free quota is 10,000
-# units/day; resolving a channel name costs 100 units (search.list), and
-# reading its recent videos costs ~2 units, so ~21 channels is well within
-# budget for one run/day. These job-alert-style channels typically post
-# openings/links directly in the video description, so each recent video is
-# treated as one candidate and fed through the same Gemini review as every
-# other source — one video sometimes bundles multiple postings together,
-# which is a known v1 simplification rather than parsing each one out.
+# units/day. Resolving a channel from a direct URL costs ~1 unit
+# (channels.list) instead of the old name-search approach's 100 units
+# (search.list) — cheaper, faster, and deterministic since there's no
+# fuzzy matching involved, so no risk of silently resolving to the wrong
+# channel. Reading a channel's recent videos costs ~2 more units, so ~21
+# channels is comfortably within the 10,000/day budget. These job-alert
+# channels typically post openings/links directly in the video
+# description, so each recent video is treated as one candidate and fed
+# through the same Gemini review as every other source — one video
+# sometimes bundles multiple postings together, which is a known v1
+# simplification rather than parsing each one out.
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
-YOUTUBE_CHANNEL_NAMES = [
-    "Placement Lelo", "DebugWithShubham", "Arsh Goyal", "PrepInsta",
-    "College Wallah", "Unstop", "Face Prep", "Coding Ninjas", "GeeksforGeeks",
-    "KN academy", "Placement Drive", "Jobs4Freshers", "Freshers Now",
-    "Freshers Jobs", "Apna College", "Love Babbar CodeHelp",
-    "Take U Forward Striver", "Kunal Kushwaha", "Anuj Bhaiya", "Coder Army",
-    "Scaler",
+
+# Paste real channel URLs here — any of these formats work:
+#   https://www.youtube.com/@handle
+#   https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx
+#   https://www.youtube.com/c/CustomName  (legacy, less reliable)
+#   https://www.youtube.com/user/username  (legacy, less reliable)
+YOUTUBE_CHANNEL_URLS = [
+    "https://www.youtube.com/@knacademy20",
+    "https://www.youtube.com/@AnuSharma02",
+    "https://www.youtube.com/@LokeshBagora",
+    "https://www.youtube.com/@OnlineStudy4u",
+    "https://www.youtube.com/@learningwithram1299",
+    "https://www.youtube.com/@hiremeplz",
+    "https://www.youtube.com/@ashishcode",
+    "https://www.youtube.com/@Foundthejob",
+    "https://www.youtube.com/@HireWithHarsh",
+]
+
+# Specific individual videos to check directly (not a whole channel's
+# recent uploads) — e.g. a one-off video someone shared. Each is fetched
+# via a single videos.list call (1 unit), far cheaper than the
+# channel-resolution + uploads-playlist path since we already have the
+# exact video.
+YOUTUBE_VIDEO_URLS = [
+    # empty for now — the mechanism stays available for future one-off video links
 ]
 YOUTUBE_MAX_VIDEOS_PER_CHANNEL = 3
 YOUTUBE_VIDEO_MAX_AGE_HOURS = 48  # covers a daily run with some buffer
@@ -740,55 +763,86 @@ def fetch_lever_listings() -> pd.DataFrame:
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
 
-def youtube_resolve_channel_id(channel_name: str) -> str:
-    try:
-        resp = requests.get(
-            f"{YOUTUBE_API_BASE}/search",
-            params={
-                "key": YOUTUBE_API_KEY,
-                "q": channel_name,
-                "type": "channel",
-                "part": "snippet",
-                "maxResults": 1,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        items = resp.json().get("items", [])
-        if not items:
-            return ""
+def youtube_resolve_channel_id(channel_url: str) -> str:
+    """
+    Parses a real YouTube channel URL and resolves it to a channel ID.
+    Three cases, cheapest/most reliable first:
+      1. /channel/UCxxxx — the ID is already right there in the URL, no
+         API call needed at all.
+      2. /@handle — one cheap, exact channels.list(forHandle=...) call
+         (1 unit). Deterministic, no fuzzy matching, no mismatch risk.
+      3. /c/CustomName or /user/username (legacy formats) — these don't
+         have a direct lookup-by-name endpoint, so falls back to
+         search.list (100 units, same as before) as a last resort.
+    """
+    channel_url = channel_url.strip().rstrip("/")
 
-        resolved_title = items[0]["snippet"].get("title", "")
-        # Sanity check: for generic/ambiguous names (Unstop, Scaler, Freshers
-        # Now, etc.), YouTube's top search result could easily be an
-        # unrelated channel. Flag it loudly rather than silently trusting a
-        # possibly-wrong match — better to know than to quietly pull the
-        # wrong channel's videos every day.
-        significant_words = [w for w in channel_name.lower().split() if len(w) > 2]
-        if significant_words and not any(w in resolved_title.lower() for w in significant_words):
-            print(f"[warn] youtube: '{channel_name}' resolved to '{resolved_title}' — "
-                  f"this looks like it might be the WRONG channel, worth checking manually")
+    channel_id_match = re.search(r"/channel/([A-Za-z0-9_-]+)", channel_url)
+    if channel_id_match:
+        return channel_id_match.group(1)
 
-        return items[0]["snippet"]["channelId"]
-    except Exception as exc:
-        print(f"[warn] youtube: couldn't resolve channel '{channel_name}': {exc}")
+    handle_match = re.search(r"/@([A-Za-z0-9_.-]+)", channel_url)
+    if handle_match:
+        handle = handle_match.group(1)
+        try:
+            resp = requests.get(
+                f"{YOUTUBE_API_BASE}/channels",
+                params={"key": YOUTUBE_API_KEY, "forHandle": handle, "part": "id"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            if items:
+                return items[0]["id"]
+            print(f"[warn] youtube: no channel found for handle '@{handle}' — check the URL is correct")
+        except Exception as exc:
+            print(f"[warn] youtube: couldn't resolve handle '@{handle}': {exc}")
+        return ""
+
+    # Legacy /c/ or /user/ URL — no direct lookup-by-name endpoint exists,
+    # so fall back to a name search as a last resort (100 units, less
+    # reliable). Worth switching these to a /@handle or /channel/ link
+    # when possible.
+    legacy_match = re.search(r"/(?:c|user)/([A-Za-z0-9_.-]+)", channel_url)
+    if legacy_match:
+        name_guess = legacy_match.group(1)
+        try:
+            resp = requests.get(
+                f"{YOUTUBE_API_BASE}/search",
+                params={"key": YOUTUBE_API_KEY, "q": name_guess, "type": "channel",
+                        "part": "snippet", "maxResults": 1},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            if items:
+                return items[0]["snippet"]["channelId"]
+        except Exception as exc:
+            print(f"[warn] youtube: couldn't resolve legacy URL '{channel_url}': {exc}")
+        return ""
+
+    print(f"[warn] youtube: couldn't parse channel URL format: '{channel_url}'")
     return ""
 
 
-def youtube_get_uploads_playlist(channel_id: str) -> str:
+def youtube_get_channel_info(channel_id: str) -> tuple:
+    """Returns (uploads_playlist_id, channel_title). Both come from the
+    same API call — requesting extra 'part' fields doesn't cost more quota."""
     try:
         resp = requests.get(
             f"{YOUTUBE_API_BASE}/channels",
-            params={"key": YOUTUBE_API_KEY, "id": channel_id, "part": "contentDetails"},
+            params={"key": YOUTUBE_API_KEY, "id": channel_id, "part": "contentDetails,snippet"},
             timeout=15,
         )
         resp.raise_for_status()
         items = resp.json().get("items", [])
         if items:
-            return items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+            uploads_playlist = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+            title = items[0]["snippet"].get("title", "")
+            return uploads_playlist, title
     except Exception as exc:
-        print(f"[warn] youtube: couldn't get uploads playlist for '{channel_id}': {exc}")
-    return ""
+        print(f"[warn] youtube: couldn't get channel info for '{channel_id}': {exc}")
+    return "", ""
 
 
 def fetch_youtube_listings() -> pd.DataFrame:
@@ -796,15 +850,19 @@ def fetch_youtube_listings() -> pd.DataFrame:
         print("[info] YOUTUBE_API_KEY not set — skipping YouTube job-channel source")
         return pd.DataFrame()
 
+    if not YOUTUBE_CHANNEL_URLS:
+        print("[info] YOUTUBE_CHANNEL_URLS is empty — add real channel URLs to enable this source")
+        return pd.DataFrame()
+
     rows = []
     cutoff = datetime.utcnow() - timedelta(hours=YOUTUBE_VIDEO_MAX_AGE_HOURS)
 
-    for channel_name in YOUTUBE_CHANNEL_NAMES:
-        channel_id = youtube_resolve_channel_id(channel_name)
+    for channel_url in YOUTUBE_CHANNEL_URLS:
+        channel_id = youtube_resolve_channel_id(channel_url)
         if not channel_id:
             continue
 
-        uploads_playlist = youtube_get_uploads_playlist(channel_id)
+        uploads_playlist, channel_title = youtube_get_channel_info(channel_id)
         if not uploads_playlist:
             continue
 
@@ -822,7 +880,7 @@ def fetch_youtube_listings() -> pd.DataFrame:
             resp.raise_for_status()
             items = resp.json().get("items", [])
         except Exception as exc:
-            print(f"[warn] youtube: couldn't fetch videos for '{channel_name}': {exc}")
+            print(f"[warn] youtube: couldn't fetch videos for '{channel_url}': {exc}")
             continue
 
         for item in items:
@@ -843,12 +901,61 @@ def fetch_youtube_listings() -> pd.DataFrame:
             rows.append({
                 "job_url": f"https://www.youtube.com/watch?v={video_id}",
                 "title": snippet.get("title", ""),
-                "company": channel_name,
+                "company": channel_title or channel_url,
                 "location": "India",
                 "description": snippet.get("description", ""),
             })
 
         time.sleep(0.3)
+
+    return pd.DataFrame(rows)
+
+
+def fetch_youtube_direct_videos() -> pd.DataFrame:
+    """
+    Fetches specific individual video URLs directly via videos.list — no
+    channel resolution or uploads-playlist lookup needed since we already
+    have the exact video. One API call per video (1 unit each).
+    """
+    if not YOUTUBE_API_KEY:
+        return pd.DataFrame()  # already logged as skipped by fetch_youtube_listings
+
+    if not YOUTUBE_VIDEO_URLS:
+        return pd.DataFrame()
+
+    rows = []
+    for video_url in YOUTUBE_VIDEO_URLS:
+        video_id_match = re.search(r"[?&]v=([A-Za-z0-9_-]{11})", video_url) or re.search(r"youtu\.be/([A-Za-z0-9_-]{11})", video_url)
+        if not video_id_match:
+            print(f"[warn] youtube: couldn't parse video ID from '{video_url}'")
+            continue
+        video_id = video_id_match.group(1)
+
+        try:
+            resp = requests.get(
+                f"{YOUTUBE_API_BASE}/videos",
+                params={"key": YOUTUBE_API_KEY, "id": video_id, "part": "snippet"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+        except Exception as exc:
+            print(f"[warn] youtube: couldn't fetch video '{video_url}': {exc}")
+            continue
+
+        if not items:
+            print(f"[warn] youtube: video '{video_url}' not found (deleted, private, or bad ID)")
+            continue
+
+        snippet = items[0].get("snippet", {})
+        rows.append({
+            "job_url": f"https://www.youtube.com/watch?v={video_id}",
+            "title": snippet.get("title", ""),
+            "company": snippet.get("channelTitle", "") or video_url,
+            "location": "India",
+            "description": snippet.get("description", ""),
+        })
+        time.sleep(0.2)
 
     return pd.DataFrame(rows)
 
@@ -1361,8 +1468,12 @@ def main():
     print(f"  {len(greenhouse_df) + len(lever_df)} listings")
 
     print("Fetching YouTube job-alert channels (optional, key-gated)...")
-    youtube_df = fetch_youtube_listings()
-    print(f"  {len(youtube_df)} listings")
+    youtube_channel_df = fetch_youtube_listings()
+    youtube_video_df = fetch_youtube_direct_videos()
+    youtube_df = pd.concat([youtube_channel_df, youtube_video_df], ignore_index=True)
+    youtube_df.drop_duplicates(subset=["job_url"], inplace=True)  # a direct video URL could overlap a channel's recent uploads
+    print(f"  {len(youtube_channel_df)} from channels + {len(youtube_video_df)} direct videos "
+          f"({len(youtube_df)} after dedup)")
 
     source_counts = {
         "Indeed/LinkedIn/Google": len(jobspy_df),
