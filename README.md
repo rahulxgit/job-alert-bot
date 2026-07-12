@@ -364,6 +364,25 @@ contact-based re-sort — so the limited quota goes to the best-fit
 candidate that needs it most, not whichever job happens to be processed
 first.
 
+## Confirmed bug fix (found via a real run log, not speculation)
+
+A run on July 12 got cancelled with zero explanation in the logs — just a
+21-minute silent gap between the last log line and GitHub's own job
+timeout killing it. Root cause: `jobspy`'s internal HTTP calls don't
+reliably enforce their own timeout, so when LinkedIn or Google stalls a
+connection instead of failing cleanly, the call can hang indefinitely.
+
+Fixed by running each term/location combo in a daemon thread with a hard
+90-second timeout (`JOBSPY_CALL_TIMEOUT_SECONDS`). If a combo doesn't
+finish in time, the run logs a warning and moves on immediately instead of
+hanging. Daemon thread specifically matters here — Python can't force-kill
+a thread stuck on a network call, so a *non-daemon* thread left behind
+would have blocked the whole script's own exit at the very end; a daemon
+thread gets torn down automatically by the interpreter instead. Workflow
+timeout was also raised from 25 to 40 minutes to give the now much larger
+pipeline (8 sources, up to 55 Gemini calls with retries, 21 YouTube
+channels) real headroom instead of the earlier conservative estimate.
+
 ## Self-audit fixes (found by code review, not a test run)
 
 - **`HUNTER_MAX_CALLS_PER_RUN` was set to 15, but Hunter's free tier is

@@ -31,6 +31,7 @@ import base64
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
@@ -251,25 +252,67 @@ CANDIDATE_PROFILE = build_candidate_profile()
 # Sources — jobspy sites
 # ---------------------------------------------------------------------------
 
+JOBSPY_CALL_TIMEOUT_SECONDS = 90  # a single term/location combo should never legitimately take this long
+
+
+def _scrape_one_combo(term: str, location: str):
+    return scrape_jobs(
+        site_name=SITES,
+        search_term=term,
+        google_search_term=f"{term} jobs near {location}",
+        location=location,
+        results_wanted=RESULTS_PER_SITE,
+        hours_old=HOURS_OLD,
+        country_indeed="India",
+        linkedin_fetch_description=True,
+    )
+
+
 def fetch_jobspy_listings() -> pd.DataFrame:
+    """
+    Confirmed via a real run log: jobspy's internal HTTP calls don't
+    reliably enforce their own timeout — one term/location combo hung
+    completely silent for 21+ minutes (LinkedIn or Google stalling the
+    connection rather than failing cleanly) until GitHub's job-level
+    25-minute timeout killed the entire run, losing everything already
+    fetched. Each combo now runs in a daemon thread with a hard timeout:
+    if it doesn't finish in time we move on immediately. Using a daemon
+    thread specifically (not a plain thread or ThreadPoolExecutor's
+    default) matters here — a stuck network call can't be force-killed in
+    Python, so a non-daemon thread left behind would block the script's
+    own process exit at the very end. A daemon thread gets torn down
+    automatically by the interpreter instead, so an abandoned hung combo
+    can only ever cost JOBSPY_CALL_TIMEOUT_SECONDS, never the whole run.
+    """
     all_results = []
     for term in SEARCH_TERMS:
         for location in LOCATIONS:
-            try:
-                df = scrape_jobs(
-                    site_name=SITES,
-                    search_term=term,
-                    google_search_term=f"{term} jobs near {location}",
-                    location=location,
-                    results_wanted=RESULTS_PER_SITE,
-                    hours_old=HOURS_OLD,
-                    country_indeed="India",
-                    linkedin_fetch_description=True,
-                )
-                if df is not None and not df.empty:
-                    all_results.append(df)
-            except Exception as exc:
-                print(f"[warn] scrape failed for '{term}' in '{location}': {exc}")
+            result_box = {}
+
+            def _worker(t=term, l=location, box=result_box):
+                try:
+                    box["df"] = _scrape_one_combo(t, l)
+                except Exception as exc:
+                    box["error"] = exc
+
+            thread = threading.Thread(target=_worker, daemon=True)
+            thread.start()
+            thread.join(timeout=JOBSPY_CALL_TIMEOUT_SECONDS)
+
+            if thread.is_alive():
+                print(f"[warn] scrape TIMED OUT for '{term}' in '{location}' after "
+                      f"{JOBSPY_CALL_TIMEOUT_SECONDS}s — likely LinkedIn/Google stalling the "
+                      f"connection rather than failing cleanly. Moving on rather than hanging "
+                      f"the whole run (this previously wasted an entire 25-minute run once).")
+                continue
+
+            if "error" in result_box:
+                print(f"[warn] scrape failed for '{term}' in '{location}': {result_box['error']}")
+                continue
+
+            df = result_box.get("df")
+            if df is not None and not df.empty:
+                all_results.append(df)
 
     if not all_results:
         return pd.DataFrame()
