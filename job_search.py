@@ -111,7 +111,7 @@ PRIORITY_COMPANIES = [
 
 # How many pre-filtered candidates to actually send to the LLM per run —
 # caps API spend even on a day with a huge raw pull
-MAX_LLM_CANDIDATES = 55
+MAX_LLM_CANDIDATES = 40  # trimmed from 55 as a safety margin — on a Gemini-exhausted day, every candidate now costs a real ~10-45s gateway call instead of the old 4.5s happy path
 LLM_FIT_THRESHOLD = 60  # 0-100 scale; only keep jobs Gemini scores at or above this
 
 SHEET_ID = os.environ["GOOGLE_SHEET_ID"]
@@ -954,16 +954,28 @@ def gateway_evaluate_job(title: str, company: str, description: str) -> dict:
         return None
 
 
-def llm_evaluate_job(title: str, company: str, description: str) -> dict:
+def llm_evaluate_job(title: str, company: str, description: str, skip_gemini_retries: bool = False) -> dict:
     """
-    Returns {"fit_score": int 0-100, "is_fresher_appropriate": bool, "reason": str}
-    Tries Gemini first (with retry-with-backoff on 429), and only falls
-    back to the self-hosted AI gateway if Gemini's retries are fully
-    exhausted or the call fails outright — so the gateway is a genuine
-    last resort, not a first choice, keeping normal-day behavior unchanged.
+    Returns {"fit_score": int 0-100, "is_fresher_appropriate": bool, "reason": str,
+    "_hit_gemini_429": bool}. The caller (llm_filter) strips "_hit_gemini_429"
+    before using the result — it's just a signal for adaptive behavior.
+
+    Tries Gemini first (with retry-with-backoff on 429 UNLESS
+    skip_gemini_retries is set — see below), and only falls back to the
+    self-hosted AI gateway if Gemini's retries are exhausted or the call
+    fails outright.
+
+    skip_gemini_retries=True makes this try Gemini exactly ONCE with no
+    backoff wait before falling back — used once a run has already proven
+    Gemini's quota is exhausted for the day, so it stops burning ~90
+    seconds per candidate confirming something already known. Confirmed
+    necessary by a real run: 12 candidates each spent the full 90s retry
+    tax only to fall back anyway (gateway succeeded all 12/12 times), and
+    the run still hit the 40-minute timeout partway through 55 candidates
+    purely from wasted retry waiting, not from any actual failure.
     """
     prompt = _build_fit_prompt(title, company, description)
-    max_retries = 3
+    max_retries = 0 if skip_gemini_retries else 3
     backoff_seconds = 15
 
     for attempt in range(max_retries + 1):
@@ -984,27 +996,34 @@ def llm_evaluate_job(title: str, company: str, description: str) -> dict:
                     time.sleep(wait)
                     continue
                 else:
-                    print(f"[warn] '{title}' @ '{company}' still rate-limited after {max_retries} retries — "
-                          f"falling back to AI gateway")
+                    if skip_gemini_retries:
+                        print(f"[info] Gemini still exhausted for '{title}' — going straight to AI gateway (no retry wait, quota already confirmed out)")
+                    else:
+                        print(f"[warn] '{title}' @ '{company}' still rate-limited after {max_retries} retries — "
+                              f"falling back to AI gateway")
                     fallback = gateway_evaluate_job(title, company, description)
                     if fallback is not None:
+                        fallback["_hit_gemini_429"] = True
                         return fallback
                     return {"fit_score": 0, "is_fresher_appropriate": False,
-                             "reason": "all LLM providers failed — not evaluated"}
+                             "reason": "all LLM providers failed — not evaluated", "_hit_gemini_429": True}
 
             resp.raise_for_status()
             text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            return _parse_json_verdict(text)
+            result = _parse_json_verdict(text)
+            result["_hit_gemini_429"] = False
+            return result
         except Exception as exc:
             print(f"[warn] Gemini evaluation failed for '{title}' @ '{company}': {exc} — falling back to AI gateway")
             fallback = gateway_evaluate_job(title, company, description)
             if fallback is not None:
+                fallback["_hit_gemini_429"] = False
                 return fallback
             return {"fit_score": 0, "is_fresher_appropriate": False,
-                     "reason": "all LLM providers failed — not evaluated"}
+                     "reason": "all LLM providers failed — not evaluated", "_hit_gemini_429": False}
 
     return {"fit_score": 0, "is_fresher_appropriate": False,
-             "reason": "all LLM providers failed — not evaluated"}
+             "reason": "all LLM providers failed — not evaluated", "_hit_gemini_429": False}
 
 
 CONSECUTIVE_RATE_LIMIT_BREAKER = 5  # stop early after this many in a row fail with 429 even after retries
@@ -1017,13 +1036,22 @@ def llm_filter(df: pd.DataFrame) -> pd.DataFrame:
     results = []
     consecutive_rate_limits = 0
     evaluated_rows = []
+    gemini_confirmed_exhausted = False  # sticky for the rest of this run once proven true
 
     for idx, row in df.iterrows():
         verdict = llm_evaluate_job(
             str(row.get("title", "")),
             str(row.get("company", "")),
             str(row.get("description", "")),
+            skip_gemini_retries=gemini_confirmed_exhausted,
         )
+        hit_429 = verdict.pop("_hit_gemini_429", False)
+        if hit_429 and not gemini_confirmed_exhausted:
+            gemini_confirmed_exhausted = True
+            print("[info] Gemini's quota confirmed exhausted for this run — skipping its retry "
+                  "wait on all remaining candidates and going straight to the AI gateway. This "
+                  "should save most of the run's remaining time budget.")
+
         results.append(verdict)
         evaluated_rows.append(idx)
 
@@ -1043,8 +1071,12 @@ def llm_filter(df: pd.DataFrame) -> pd.DataFrame:
             break
 
         # Free-tier Gemini is rate-limited (~15 req/min on Flash-Lite) —
-        # pace calls to stay comfortably under that instead of racing into 429s
-        time.sleep(4.5)
+        # pace calls to stay comfortably under that instead of racing into 429s.
+        # Skip this pacing once Gemini's confirmed exhausted, since we're not
+        # calling it at full speed anymore anyway — no need to slow down calls
+        # that are now going straight to the gateway.
+        if not gemini_confirmed_exhausted:
+            time.sleep(4.5)
 
     # Only score the rows we actually attempted — anything left unevaluated
     # after an early break stays out of the sheet entirely, so it's picked

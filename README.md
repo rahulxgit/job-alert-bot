@@ -364,6 +364,28 @@ contact-based re-sort — so the limited quota goes to the best-fit
 candidate that needs it most, not whichever job happens to be processed
 first.
 
+## Confirmed bug fix #2 — adaptive Gemini quota detection (found via a real run log)
+
+A run on July 12 hit the 40-minute timeout despite the AI gateway fallback
+working perfectly (12/12 successful fallback calls, zero gateway
+failures). The actual cause: Gemini's daily quota was fully exhausted for
+the entire run — every single call hit 429 — but the script didn't know
+that until each candidate individually spent the full 90-second retry
+sequence (15s + 30s + 45s) proving it, before finally falling back. With
+up to 55 candidates all guaranteed to fail the same way, that's over 80
+minutes of pure wasted waiting on a conclusion already reached on
+candidate #1.
+
+Fixed with adaptive detection: the first time a candidate exhausts
+Gemini's retries and falls back, a flag is set for the rest of that run.
+Every subsequent candidate then tries Gemini exactly once (no backoff
+wait) before going straight to the gateway — since we already know
+retrying won't help today. This turns ~90 wasted seconds/candidate into
+effectively zero once exhaustion is confirmed. `MAX_LLM_CANDIDATES` was
+also trimmed from 55 to 40 as a safety margin, since even with this fix,
+every candidate on an exhausted day still costs a real gateway call
+(~10-45s) instead of the old 4.5s happy-path pacing.
+
 ## Confirmed bug fix (found via a real run log, not speculation)
 
 A run on July 12 got cancelled with zero explanation in the logs — just a
