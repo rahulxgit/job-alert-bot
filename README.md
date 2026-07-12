@@ -142,12 +142,22 @@ that's a one-line change whenever it's wanted.
   automation built on Zapier's own platform (e.g. a Zap watching an RSS
   feed and writing to the Sheet), independent of this repo — not something
   that plugs into `job_search.py`.
-- **YouTube job-channel scraping is a v1 simplification.** Each recent
-  video is treated as one candidate (title + full description), even
-  though these channels often bundle several distinct job postings into a
-  single video description. Gemini reviews the video as a whole rather
-  than each opening separately, so a video with one great match buried
-  among five irrelevant ones might not score as highly as it should.
+- **YouTube descriptions are parsed for individual job links, not treated
+  as one lump per video.** Each video's description is split line by line,
+  and every real job/apply link found becomes its own separate candidate
+  — with the surrounding line of text as a title guess — instead of the
+  whole video (which might bundle 5-10 different postings) being judged
+  as a single unit. Social/messaging/self-promo links (Instagram,
+  Telegram, WhatsApp, the channel's own YouTube links) are filtered out
+  automatically before being treated as job links. If a video's
+  description has no parseable links at all — some channels talk through
+  openings verbally instead of linking them — it falls back to treating
+  the video itself as one candidate, so nothing is silently dropped
+  either way. One residual limitation: link-aggregator pages like
+  Linktree aren't followed/resolved, so a channel that only posts a
+  single Linktree link per video (rather than direct per-company links)
+  won't get its individual postings extracted — that whole link is
+  filtered out as non-job noise instead.
   Channel resolution is URL-based and deterministic now (see step 8 in
   setup) — `/channel/` and `/@handle` links resolve exactly, with no
   fuzzy-matching risk. Legacy `/c/` or `/user/` URLs still fall back to a

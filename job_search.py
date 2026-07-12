@@ -157,13 +157,14 @@ COMPANY_SUFFIXES_TO_STRIP = [
 # (channels.list) instead of the old name-search approach's 100 units
 # (search.list) — cheaper, faster, and deterministic since there's no
 # fuzzy matching involved, so no risk of silently resolving to the wrong
-# channel. Reading a channel's recent videos costs ~2 more units, so ~21
-# channels is comfortably within the 10,000/day budget. These job-alert
-# channels typically post openings/links directly in the video
-# description, so each recent video is treated as one candidate and fed
-# through the same Gemini review as every other source — one video
-# sometimes bundles multiple postings together, which is a known v1
-# simplification rather than parsing each one out.
+# channel. Reading a channel's recent videos costs ~2 more units per
+# channel. Each video's description gets parsed line by line for real
+# job/apply links — every link found becomes its own separate candidate
+# (not the video itself as one lump), with the surrounding line of text
+# as a title guess. Social/messaging/self-promo links (Instagram,
+# Telegram, WhatsApp, etc.) are filtered out before being treated as job
+# links. If a video has no parseable links at all, it falls back to being
+# treated as one candidate so nothing is silently dropped.
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
 # Paste real channel URLs here — any of these formats work:
@@ -845,6 +846,83 @@ def youtube_get_channel_info(channel_id: str) -> tuple:
     return "", ""
 
 
+URL_IN_TEXT_REGEX = re.compile(r"https?://[^\s\)\]\>\"']+")
+
+# Links that show up constantly in these channels' descriptions but are
+# never actual job postings — social/messaging/self-promo noise to filter
+# out before treating a link as a candidate job URL.
+NON_JOB_LINK_DOMAINS = [
+    "instagram.com", "t.me", "telegram.me", "wa.me", "chat.whatsapp.com",
+    "facebook.com", "fb.com", "twitter.com", "x.com/", "youtube.com/watch",
+    "youtube.com/@", "youtube.com/channel", "youtu.be", "linkedin.com/in/",
+    "linktr.ee",  # aggregator page, not a direct job link — would need a second fetch to resolve
+]
+
+
+def _extract_job_links_from_description(description: str, fallback_title: str) -> list:
+    """
+    Walks a video description line by line looking for real URLs. These
+    channels typically format postings like
+    "1. Company — Role — Apply: https://..." on their own line, so the
+    rest of that line (minus the URL) becomes the job's title/context.
+    Returns a list of (job_url, title_guess) tuples, one per real link
+    found — filtering out social/messaging/self-promo links that aren't
+    actual job postings.
+    """
+    results = []
+    seen_urls = set()
+
+    for line in description.split("\n"):
+        urls_in_line = URL_IN_TEXT_REGEX.findall(line)
+        for raw_url in urls_in_line:
+            url = raw_url.rstrip(").,;:")  # strip trailing punctuation the regex can catch
+            if url in seen_urls:
+                continue
+            if any(domain in url.lower() for domain in NON_JOB_LINK_DOMAINS):
+                continue
+            seen_urls.add(url)
+
+            context = line.replace(raw_url, "").strip(" -:|\t•—")
+            title_guess = context if context else fallback_title
+            results.append((url, title_guess))
+
+    return results
+
+
+def _rows_from_video(video_url: str, video_title: str, channel_label: str, description: str) -> list:
+    """
+    Turns one video into one row per real job link found in its
+    description. If no links are found at all (e.g. the channel just
+    talks through openings verbally, or uses a link format this can't
+    parse), falls back to a single row using the video itself as the
+    job_url, so the video isn't silently dropped entirely.
+    """
+    job_links = _extract_job_links_from_description(description, video_title)
+
+    if not job_links:
+        return [{
+            "job_url": video_url,
+            "title": video_title,
+            "company": channel_label,
+            "location": "India",
+            "description": description,
+        }]
+
+    rows = []
+    for job_url, title_guess in job_links:
+        rows.append({
+            "job_url": job_url,
+            "title": title_guess,
+            "company": channel_label,
+            "location": "India",
+            # Keep the full video description as context too — a single
+            # line of surrounding text is often too thin on its own for
+            # Gemini to judge real fit.
+            "description": f"{title_guess}\n\n(From YouTube video: {video_title})\n\n{description[:2000]}",
+        })
+    return rows
+
+
 def fetch_youtube_listings() -> pd.DataFrame:
     if not YOUTUBE_API_KEY:
         print("[info] YOUTUBE_API_KEY not set — skipping YouTube job-channel source")
@@ -898,13 +976,12 @@ def fetch_youtube_listings() -> pd.DataFrame:
             if not video_id:
                 continue
 
-            rows.append({
-                "job_url": f"https://www.youtube.com/watch?v={video_id}",
-                "title": snippet.get("title", ""),
-                "company": channel_title or channel_url,
-                "location": "India",
-                "description": snippet.get("description", ""),
-            })
+            video_url = f"https://www.youtube.com/watch?v={video_id}"
+            video_title = snippet.get("title", "")
+            description = snippet.get("description", "")
+            channel_label = channel_title or channel_url
+
+            rows.extend(_rows_from_video(video_url, video_title, channel_label, description))
 
         time.sleep(0.3)
 
@@ -915,7 +992,9 @@ def fetch_youtube_direct_videos() -> pd.DataFrame:
     """
     Fetches specific individual video URLs directly via videos.list — no
     channel resolution or uploads-playlist lookup needed since we already
-    have the exact video. One API call per video (1 unit each).
+    have the exact video. One API call per video (1 unit each). Same
+    link-extraction logic as the channel path: pulls every real job link
+    out of the description rather than treating the video itself as one job.
     """
     if not YOUTUBE_API_KEY:
         return pd.DataFrame()  # already logged as skipped by fetch_youtube_listings
@@ -948,13 +1027,12 @@ def fetch_youtube_direct_videos() -> pd.DataFrame:
             continue
 
         snippet = items[0].get("snippet", {})
-        rows.append({
-            "job_url": f"https://www.youtube.com/watch?v={video_id}",
-            "title": snippet.get("title", ""),
-            "company": snippet.get("channelTitle", "") or video_url,
-            "location": "India",
-            "description": snippet.get("description", ""),
-        })
+        video_title = snippet.get("title", "")
+        description = snippet.get("description", "")
+        channel_label = snippet.get("channelTitle", "") or video_url
+        clean_video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+        rows.extend(_rows_from_video(clean_video_url, video_title, channel_label, description))
         time.sleep(0.2)
 
     return pd.DataFrame(rows)
