@@ -53,17 +53,50 @@ from jobspy import scrape_jobs
 SEARCH_TERMS = [
     "SDE 1",
     "Software Development Engineer",
+    "Software Engineer",
     "Full Stack Developer",
+    "Full Stack Engineer",
     "Backend Developer",
+    "MERN Stack Developer",
+    "Frontend Developer",
+    "Frontend Engineer",
+    "React Developer",
+    "Next.js Developer",
+    "Java Developer",
+    "Node.js Developer",
+    "Web Developer",
+    "Java Full Stack Developer",
+    "Associate Software Engineer",
+    "Graduate Software Engineer",
+    "Junior Software Engineer",
+    "Junior Full Stack Developer",
+    "Entry Level Software Engineer",
+    "Product Engineer",
+    "Application Developer",
 ]
 
+# Kept at 2 deliberately, not widened to the full city list — jobspy runs
+# one search per term x location combo, so terms x locations scales fast.
+# 22 terms x 2 locations = 44 combos already; x7 cities would be 154 combos,
+# ~24x today's runtime for low marginal value since India-wide search
+# already surfaces most city-specific postings. Add specific cities here
+# individually if particular ones prove worth the extra combos.
 LOCATIONS = ["Bengaluru, India", "India"]
 SITES = ["indeed", "linkedin", "google"]  # glassdoor/zip_recruiter removed — confirmed 100% blocked from Actions, see README
 RESULTS_PER_SITE = 30
 HOURS_OLD = 24
 
-INTERNSHALA_SEARCH_TERMS = ["full-stack-development", "software-development", "web-development"]
-NAUKRI_SEARCH_TERMS = ["sde 1", "software developer fresher", "full stack developer fresher"]
+INTERNSHALA_SEARCH_TERMS = [
+    "full-stack-development", "software-development", "web-development",
+    "react-js-development", "java-development", "node-js-development",
+    # ^ these three are plausible Internshala category slugs based on their
+    # usual naming pattern, but unverified — if they 404 or return nothing,
+    # check internshala.com directly for the real category slug and swap it in
+]
+NAUKRI_SEARCH_TERMS = [
+    "sde 1", "software developer fresher", "full stack developer fresher",
+    "react developer fresher", "java developer fresher", "node js developer fresher",
+]
 
 # Company career pages via public ATS APIs — genuinely reliable (no anti-bot
 # fight, these are real documented/semi-documented public endpoints), unlike
@@ -86,10 +119,21 @@ LEVER_BOARDS = {
 
 # Pre-filter keywords — cheap first pass to shrink the list before paying for LLM calls
 PROFILE_KEYWORDS = [
-    "react", "next.js", "nextjs", "node", "express", "typescript", "javascript",
+    "react", "react.js", "reactjs", "next.js", "nextjs", "node", "node.js",
+    "express", "express.js", "typescript", "javascript", "es6", "es2023",
     "mongodb", "postgresql", "prisma", "mysql", "supabase", "firebase",
     "rest api", "mern", "full stack", "fullstack", "ai agents",
-    "rag", "llm", "mcp", "docker", "git", "ci/cd", "python", "java", "c++",
+    "rag", "llm", "mcp", "docker", "git", "github", "github actions",
+    "ci/cd", "python", "java", "core java", "c++", "html", "css", "sql",
+    "redux", "redux toolkit", "react hooks", "react router", "context api",
+    "react query", "tanstack query", "spa", "component based architecture",
+    "async await", "fetch api", "axios", "json", "crud", "mvc", "jwt",
+    "authentication", "database design", "api development", "oop",
+    "collections", "multithreading", "spring", "spring boot", "hibernate",
+    "jdbc", "maven", "gradle", "tailwindcss", "responsive design",
+    "framer motion", "postman", "vercel", "vs code", "data structures",
+    "algorithms", "dsa", "operating systems", "dbms", "computer networks",
+    "system design",
 ]
 
 FRESHER_SIGNALS = [
@@ -496,7 +540,7 @@ def fetch_naukri_listings() -> pd.DataFrame:
 # anti-bot/proxy service.)
 # ---------------------------------------------------------------------------
 
-WELLFOUND_ROLE_SLUGS = ["software-engineer", "full-stack-engineer", "backend-engineer"]
+WELLFOUND_ROLE_SLUGS = ["software-engineer", "full-stack-engineer", "backend-engineer", "frontend-engineer", "react-developer"]
 
 
 def _find_job_like_dicts(node, found=None, depth=0, max_depth=25):
