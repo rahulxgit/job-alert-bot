@@ -156,7 +156,7 @@ PRIORITY_COMPANIES = [
 
 # How many pre-filtered candidates to actually send to the LLM per run —
 # caps API spend even on a day with a huge raw pull
-MAX_LLM_CANDIDATES = 40  # trimmed from 55 as a safety margin — on a Gemini-exhausted day, every candidate now costs a real ~10-45s gateway call instead of the old 4.5s happy path
+MAX_LLM_CANDIDATES = 60  # bumped from 40 after confirming the cap was actually being hit; jobspy's own scraping is now the dominant time cost (~31 min with 44 combos), not this review stage, so there's room
 LLM_FIT_THRESHOLD = 60  # 0-100 scale; only keep jobs Gemini scores at or above this
 
 SHEET_ID = os.environ["GOOGLE_SHEET_ID"]

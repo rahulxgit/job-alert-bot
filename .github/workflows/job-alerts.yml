@@ -13,7 +13,7 @@ concurrency:
 jobs:
   run-job-search:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 55
 
     steps:
       - name: Checkout repo
@@ -41,4 +41,4 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           AI_GATEWAY_URL: ${{ secrets.AI_GATEWAY_URL }}
           APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
-        run: python job_search.py
+        run: python -u job_search.py

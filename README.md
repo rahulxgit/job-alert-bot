@@ -346,10 +346,21 @@ to trigger it manually and confirm it works before waiting for the 8 AM cron.
   warning rather than crashing.
 - `LLM_FIT_THRESHOLD` (currently 60) controls how strict Gemini's review is.
   Raise it if the digest is too noisy, lower it if too sparse.
-- `MAX_LLM_CANDIDATES` (currently 55) caps how many jobs get sent to Gemini
-  per run — kept conservative to stay within free-tier rate limits (roughly
-  15 requests/minute on Flash-Lite). The script paces calls 4.5s apart to
-  avoid 429 errors; raising the candidate cap will make the run take longer.
+- `MAX_LLM_CANDIDATES` (currently 60, raised from 40 after a real run
+  confirmed the cap was actually being hit) caps how many jobs get sent
+  for review per run. As of the 22-term search expansion, jobspy's own
+  scraping (~31 min for 44 term×location combos) is the actual time
+  bottleneck now, not this review stage — a run with 40 candidates
+  completed comfortably inside the timeout with room to spare, which is
+  why this was raised.
+- **Log timestamps for anything after the jobspy stage were previously
+  unreliable** — Python's `print()` output is block-buffered when not
+  connected to a live terminal (which is what GitHub Actions gives it),
+  so dozens of log lines could appear with nearly identical timestamps,
+  clustered at the very end, even though the actual work happened spread
+  out over real time. Fixed by running `python -u job_search.py` in the
+  workflow (unbuffered stdout) — logs from any run after this fix reflect
+  real timing accurately.
 - **Rate-limit circuit breaker**: if `CONSECUTIVE_RATE_LIMIT_BREAKER`
   (currently 5) candidates in a row fail with 429 even after retries, the
   run stops evaluating further candidates instead of retrying every
@@ -430,9 +441,19 @@ hanging. Daemon thread specifically matters here — Python can't force-kill
 a thread stuck on a network call, so a *non-daemon* thread left behind
 would have blocked the whole script's own exit at the very end; a daemon
 thread gets torn down automatically by the interpreter instead. Workflow
-timeout was also raised from 25 to 40 minutes to give the now much larger
-pipeline (8 sources, up to 55 Gemini calls with retries, 21 YouTube
-channels) real headroom instead of the earlier conservative estimate.
+timeout has since been raised further (now 55 minutes) as the search
+terms expanded and jobspy's real scraping time grew alongside it.
+
+**Honest worst-case math**: with 22 search terms × 2 locations = 44
+combos, if every single one hit the full 90-second timeout, jobspy alone
+could theoretically take up to 66 minutes — more than the 55-minute
+workflow timeout. In practice, a real run completed all 44 combos in
+~31 minutes (most combos finish in a few seconds; only genuinely stuck
+ones hit the full 90s), so this hasn't been an issue, but a sufficiently
+unlucky day with many stalled connections at once could still in theory
+approach the timeout. If that ever happens, lowering
+`JOBSPY_CALL_TIMEOUT_SECONDS` (trading a bit of per-combo patience for a
+lower worst-case ceiling) is the first lever to pull.
 
 ## Self-audit fixes (found by code review, not a test run)
 
