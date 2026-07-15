@@ -1,0 +1,152 @@
+"""
+All configuration in one place: env vars, search terms, keyword lists,
+tunable constants. Nothing here does any work — pure data, so it's cheap
+to read and safe to import from anywhere without side effects.
+"""
+import os
+
+# --- jobspy (Indeed/LinkedIn/Google) ---------------------------------------
+SEARCH_TERMS = [
+    "SDE 1", "Software Development Engineer", "Software Engineer",
+    "Full Stack Developer", "Full Stack Engineer", "Backend Developer",
+    "MERN Stack Developer", "Frontend Developer", "Frontend Engineer",
+    "React Developer", "Next.js Developer", "Java Developer",
+    "Node.js Developer", "Web Developer", "Java Full Stack Developer",
+    "Associate Software Engineer", "Graduate Software Engineer",
+    "Junior Software Engineer", "Junior Full Stack Developer",
+    "Entry Level Software Engineer", "Product Engineer", "Application Developer",
+]
+# Kept at 2 deliberately — jobspy runs one search per term x location combo.
+# 22 terms x 2 locations = 44 combos already; widening locations scales fast.
+# See sources/jobspy_common.py for the combo-count math.
+LOCATIONS = ["Bengaluru, India", "India"]
+JOBSPY_SITES = ["indeed", "linkedin", "google"]  # glassdoor/zip_recruiter removed — confirmed 100% blocked from Actions
+RESULTS_PER_SITE = 30
+HOURS_OLD = 24
+JOBSPY_CALL_TIMEOUT_SECONDS = 90
+
+# --- Internshala -------------------------------------------------------------
+INTERNSHALA_SEARCH_TERMS = [
+    "full-stack-development", "software-development", "web-development",
+    "react-js-development", "java-development", "node-js-development",
+    # last three are plausible category slugs, unverified — check
+    # internshala.com directly if they consistently return nothing
+]
+
+# --- Naukri --------------------------------------------------------------
+NAUKRI_SEARCH_TERMS = [
+    "sde 1", "software developer fresher", "full stack developer fresher",
+    "react developer fresher", "java developer fresher", "node js developer fresher",
+]
+
+# --- Wellfound (best-effort) ------------------------------------------------
+WELLFOUND_ROLE_SLUGS = ["software-engineer", "full-stack-engineer", "backend-engineer"]
+
+# --- Company career pages (Greenhouse/Lever) --------------------------------
+# Add a company once its board token is confirmed: visit
+# job-boards.greenhouse.io/<token>/ or jobs.lever.co/<token> — if it loads,
+# that's the token. Wrong/missing tokens just return 0, harmless.
+GREENHOUSE_BOARDS = {"postman": "postman"}
+LEVER_BOARDS = {}
+
+# --- YouTube ------------------------------------------------------------
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
+YOUTUBE_CHANNEL_URLS = [
+    "https://www.youtube.com/@knacademy20",
+    "https://www.youtube.com/@AnuSharma02",
+    "https://www.youtube.com/@LokeshBagora",
+    "https://www.youtube.com/@OnlineStudy4u",
+    "https://www.youtube.com/@learningwithram1299",
+    "https://www.youtube.com/@hiremeplz",
+    "https://www.youtube.com/@ashishcode",
+    "https://www.youtube.com/@Foundthejob",
+    "https://www.youtube.com/@HireWithHarsh",
+]
+YOUTUBE_VIDEO_URLS = []  # one-off video links, not whole channels
+YOUTUBE_MAX_VIDEOS_PER_CHANNEL = 3
+YOUTUBE_VIDEO_MAX_AGE_HOURS = 48
+
+# --- LinkedIn recruiter posts (optional, cookie-gated, higher risk) ---------
+LINKEDIN_LI_AT_COOKIE = os.environ.get("LINKEDIN_LI_AT_COOKIE", "")
+LINKEDIN_POST_SEARCH_TERMS = ["hiring software engineer fresher", "hiring sde 1", "hiring full stack developer"]
+
+# --- Matching / scoring ---------------------------------------------------
+PROFILE_KEYWORDS = [
+    "react", "react.js", "reactjs", "next.js", "nextjs", "node", "node.js",
+    "express", "express.js", "typescript", "javascript", "es6", "es2023",
+    "mongodb", "postgresql", "prisma", "mysql", "supabase", "firebase",
+    "rest api", "mern", "full stack", "fullstack", "ai agents",
+    "rag", "llm", "mcp", "docker", "git", "github", "github actions",
+    "ci/cd", "python", "java", "core java", "c++", "html", "css", "sql",
+    "redux", "redux toolkit", "react hooks", "react router", "context api",
+    "react query", "tanstack query", "spa", "component based architecture",
+    "async await", "fetch api", "axios", "json", "crud", "mvc", "jwt",
+    "authentication", "database design", "api development", "oop",
+    "collections", "multithreading", "spring", "spring boot", "hibernate",
+    "jdbc", "maven", "gradle", "tailwindcss", "responsive design",
+    "framer motion", "postman", "vercel", "vs code", "data structures",
+    "algorithms", "dsa", "operating systems", "dbms", "computer networks",
+    "system design",
+]
+FRESHER_SIGNALS = [
+    "sde 1", "sde-1", "sde i", "software development engineer i",
+    "fresher", "0-1 year", "0-2 year", "0 - 2 year", "0-2 yrs",
+    "entry level", "entry-level", "graduate engineer", "graduate trainee",
+    "junior", "campus hire", "new grad", "intern",
+]
+SENIORITY_EXCLUSIONS = [
+    "senior", "sr.", "sr ", "staff", "principal", "lead", "architect",
+    "manager", "director", "head of", "vp ", "9-12 yr", "6-9 yr", "5-8 yr",
+    "8+ year", "10+ year", "7+ year", "6+ year", "5+ year", "4+ year",
+]
+PRIORITY_COMPANIES = [
+    "razorpay", "sarvam", "groww", "meesho", "zepto", "cred", "swiggy",
+    "zomato", "flipkart", "postman", "browserstack", "freshworks",
+]
+MAX_LLM_CANDIDATES = 60
+LLM_FIT_THRESHOLD = 60
+CONSECUTIVE_RATE_LIMIT_BREAKER = 5
+
+# --- AI providers ----------------------------------------------------------
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+AI_GATEWAY_URL = os.environ.get("AI_GATEWAY_URL") or "https://ai-gateway-wx35.onrender.com"
+
+# --- Recruiter email enrichment ---------------------------------------------
+HUNTER_API_KEY = os.environ.get("HUNTER_API_KEY", "")
+HUNTER_MAX_CALLS_PER_RUN = 1  # ~25/month free tier ÷ ~30 daily runs
+APOLLO_API_KEY = os.environ.get("APOLLO_API_KEY", "")
+APOLLO_MAX_CALLS_PER_RUN = 1  # ~50/month free tier ÷ ~30 daily runs
+APOLLO_TARGET_TITLES = ["Recruiter", "Talent Acquisition", "HR", "Hiring Manager", "Human Resources"]
+COMPANY_SUFFIXES_TO_STRIP = [
+    " pvt ltd", " pvt. ltd.", " private limited", " limited", " llp",
+    " inc.", " inc", " llc", " technologies", " technology", " labs",
+    " solutions", " services", " systems", " india", " co.", " ltd",
+]
+
+# --- Google Sheets / Gmail ---------------------------------------------------
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
+GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+GMAIL_TO = os.environ.get("ALERT_EMAIL_TO", "")
+GMAIL_CLIENT_ID = os.environ.get("GMAIL_CLIENT_ID", "")
+GMAIL_CLIENT_SECRET = os.environ.get("GMAIL_CLIENT_SECRET", "")
+GMAIL_REFRESH_TOKEN = os.environ.get("GMAIL_REFRESH_TOKEN", "")
+
+# --- Paths -----------------------------------------------------------------
+PROFILE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "profile-data.json")
+
+_REQUIRED_FOR_REAL_RUN = [
+    "GEMINI_API_KEY", "GOOGLE_SHEET_ID", "GOOGLE_SERVICE_ACCOUNT_JSON",
+    "GMAIL_TO", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN",
+]
+
+
+def validate():
+    """Fails fast with a clear error listing exactly what's missing.
+    Called explicitly by main.py at real startup — NOT at import time —
+    so tests and other tooling can import config/models/pure-logic
+    modules freely without every secret being set."""
+    missing = [name for name in _REQUIRED_FOR_REAL_RUN if not globals().get(name)]
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
