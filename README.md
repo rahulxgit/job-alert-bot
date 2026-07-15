@@ -11,12 +11,40 @@ overlap. For jobs that pass, tries to find a real recruiter/company email
 for outreach. Logs new matches to a Google Sheet and emails me the digest.
 Runs on GitHub Actions so it doesn't depend on my laptop being on.
 
+## Architecture (refactored into modules)
+
+The bot was refactored from a single ~1700-line script into a modular
+package. Entry point is now `main.py` (was `config.py (or the relevant module in sources/, ai/, etc.)`) — the
+workflow and all environment variable names are unchanged, so no secrets
+need updating.
+
+```
+main.py            entry point — orchestrates the pipeline
+config.py           all env vars, search terms, keyword lists, constants
+models.py            JobListing, FitVerdict dataclasses
+scheduler.py          optional local-loop runner (GH Actions handles real scheduling)
+utils/                logging, retry/backoff, hard-timeout helper, text parsing
+sources/               one file per source, each implementing fetch_listings()
+ai/                     Gemini provider, gateway fallback, prefilter, evaluator
+enrichment/              recruiter email chain (JD -> Hunter -> Apollo)
+sheets/                  Google Sheets dedup logging
+mailer/                  Gmail digest (named mailer/, not email/ — email/ would
+                         shadow Python's own stdlib email module)
+tests/                   pytest suite for the pure-logic pieces (no network needed)
+```
+
+Every source in `sources/` is fully isolated — `main.py`'s `fetch_all()`
+catches any unexpected exception per-source, so one source breaking can
+never take down the rest of the run. This was already true in the
+monolith's `try/except` blocks; the refactor just makes it structurally
+enforced rather than convention-based.
+
 ## How it fits together
 
 ```
 GitHub Actions (cron, 8 AM IST)
         ↓
-job_search.py
+main.py
         ↓
 jobspy scrapes Indeed + LinkedIn + Google Jobs
         +
@@ -120,7 +148,7 @@ that's a one-line change whenever it's wanted.
   this way. To add a company, find its Greenhouse/Lever board token by
   checking whether `job-boards.greenhouse.io/<token>/` or
   `jobs.lever.co/<token>` loads a real careers page, then add it to
-  `GREENHOUSE_BOARDS` or `LEVER_BOARDS` at the top of `job_search.py`.
+  `GREENHOUSE_BOARDS` or `LEVER_BOARDS` at the top of `config.py (or the relevant module in sources/, ai/, etc.)`.
 - **Instahyre and Hirist are intentionally not included.** Both render
   listings via client-side JavaScript rather than plain server HTML,
   similar to Wellfound's situation — reliably scraping them would need the
@@ -141,7 +169,7 @@ that's a one-line change whenever it's wanted.
   Zapier automation is wanted, that would be a separate, parallel
   automation built on Zapier's own platform (e.g. a Zap watching an RSS
   feed and writing to the Sheet), independent of this repo — not something
-  that plugs into `job_search.py`.
+  that plugs into `config.py (or the relevant module in sources/, ai/, etc.)`.
 - **YouTube descriptions are parsed for individual job links, not treated
   as one lump per video.** Each video's description is split line by line,
   and every real job/apply link found becomes its own separate candidate
@@ -283,7 +311,7 @@ comfortably covers this.
    "YouTube Data API v3" under API restrictions, so it can't be misused
    for anything else if it ever leaks.
 
-Two independent lists at the top of `job_search.py`, both starting empty
+Two independent lists at the top of `config.py (or the relevant module in sources/, ai/, etc.)`, both starting empty
 until real URLs are added — currently configured:
 
 - **`YOUTUBE_CHANNEL_URLS`** — scans each channel's recent uploads
@@ -320,13 +348,19 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 | `AI_GATEWAY_URL` | optional — omit entirely to use the default `https://ai-gateway-wx35.onrender.com`; only set this if the gateway is redeployed elsewhere |
 
 ### 10. ⚠️ Update the Sheet header row before running again
-The script now appends an 8th column (`Email`) after `Date Added`. If
-you've manually added an `Applied` column to the sheet already, **insert a
-new column for `Email` between `Date Added` and `Applied`** before running
-again — otherwise new rows will write recruiter emails into whatever column
-currently sits in that 8th position, silently colliding with your `Applied`
-tracking. Header row should read:
-`URL | Title | Company | Location | Fit Score | Reason | Date Added | Email | Applied`
+The script now appends a 9th column (`Source`) after `Email`. Insert a
+new column for `Source` between `Email` and `Applied` (if you've added an
+`Applied` column already) before running again — otherwise new rows will
+write the source platform into whatever column currently sits in that 9th
+position, silently colliding with your `Applied` tracking. Header row
+should read:
+`URL | Title | Company | Location | Fit Score | Reason | Date Added | Email | Source | Applied`
+
+`Source` shows exactly which platform each job came from — Indeed,
+Linkedin, Google, Internshala, Naukri, Wellfound, Greenhouse, Lever,
+YouTube, or LinkedIn Posts — so you can see directly, every day, which
+sources are actually contributing to your final matches instead of
+guessing from the Action logs.
 
 ### 11. Push and test
 Push this repo to GitHub, then go to Actions → Daily Job Alert → Run workflow
@@ -335,11 +369,11 @@ to trigger it manually and confirm it works before waiting for the 8 AM cron.
 ## Tuning
 
 - `SEARCH_TERMS`, `LOCATIONS`, `PROFILE_KEYWORDS`, `PRIORITY_COMPANIES`,
-  `INTERNSHALA_SEARCH_TERMS` are all at the top of `job_search.py`.
+  `INTERNSHALA_SEARCH_TERMS` are all at the top of `config.py (or the relevant module in sources/, ai/, etc.)`.
 - **`data/profile-data.json` now drives `CANDIDATE_PROFILE` automatically** —
   this is a copy of the same source-of-truth file the resume-portfolio-sync
   skill uses. Whenever the resume/portfolio changes, update
-  `data/profile-data.json` in this repo and push — `job_search.py` rebuilds
+  `data/profile-data.json` in this repo and push — `config.py (or the relevant module in sources/, ai/, etc.)` rebuilds
   the profile text Gemini reads from this file at the start of every run,
   no manual script edits needed anymore. If the file is ever missing or
   malformed, the script falls back to a minimal generic profile and logs a
@@ -358,7 +392,7 @@ to trigger it manually and confirm it works before waiting for the 8 AM cron.
   connected to a live terminal (which is what GitHub Actions gives it),
   so dozens of log lines could appear with nearly identical timestamps,
   clustered at the very end, even though the actual work happened spread
-  out over real time. Fixed by running `python -u job_search.py` in the
+  out over real time. Fixed by running `python -u config.py (or the relevant module in sources/, ai/, etc.)` in the
   workflow (unbuffered stdout) — logs from any run after this fix reflect
   real timing accurately.
 - **Rate-limit circuit breaker**: if `CONSECUTIVE_RATE_LIMIT_BREAKER`
