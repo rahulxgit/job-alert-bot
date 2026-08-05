@@ -1,6 +1,6 @@
 # Job Alert Bot
 
-Scrapes Indeed, LinkedIn, Google Jobs, Internshala (all-India), Naukri,
+Scrapes LinkedIn, Google Jobs, Internshala (all-India), Naukri,
 (best-effort) Wellfound, optional LinkedIn recruiter posts, and
 Greenhouse/Lever company career pages every morning. (Glassdoor and
 ZipRecruiter were tried and removed — both are fully blocked from GitHub
@@ -46,7 +46,7 @@ GitHub Actions (cron, 8 AM IST)
         ↓
 main.py
         ↓
-jobspy scrapes Indeed + LinkedIn + Google Jobs
+jobspy scrapes LinkedIn + Google Jobs (Indeed removed at user request)
         +
 custom scraper pulls paid internships from Internshala (all-India)
         +
@@ -356,7 +356,7 @@ position, silently colliding with your `Applied` tracking. Header row
 should read:
 `URL | Title | Company | Location | Fit Score | Reason | Date Added | Email | Source | Applied`
 
-`Source` shows exactly which platform each job came from — Indeed,
+`Source` shows exactly which platform each job came from —
 Linkedin, Google, Internshala, Naukri, Wellfound, Greenhouse, Lever,
 YouTube, or LinkedIn Posts — so you can see directly, every day, which
 sources are actually contributing to your final matches instead of

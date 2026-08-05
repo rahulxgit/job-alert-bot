@@ -14,7 +14,6 @@ import pandas as pd
 import config
 from models import JobListing
 from utils.logging_setup import get_logger
-from sources.indeed import IndeedSource
 from sources.linkedin import LinkedInSource
 from sources.google import GoogleJobsSource
 from sources.internshala import InternshalaSource
@@ -36,7 +35,7 @@ log = get_logger("main")
 # needs editing to add/remove a source. Order doesn't matter functionally,
 # only for log readability.
 ALL_SOURCES = [
-    IndeedSource(), LinkedInSource(), GoogleJobsSource(),
+    LinkedInSource(), GoogleJobsSource(),
     InternshalaSource(), NaukriSource(), WellfoundSource(),
     GreenhouseSource(), LeverSource(), YouTubeSource(), LinkedInPostsSource(),
 ]

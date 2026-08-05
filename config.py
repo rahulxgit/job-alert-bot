@@ -5,7 +5,7 @@ to read and safe to import from anywhere without side effects.
 """
 import os
 
-# --- jobspy (Indeed/LinkedIn/Google) ---------------------------------------
+# --- jobspy (LinkedIn/Google) ------------------------------------------------
 SEARCH_TERMS = [
     "SDE 1", "Software Development Engineer", "Software Engineer",
     "Full Stack Developer", "Full Stack Engineer", "Backend Developer",
@@ -20,7 +20,7 @@ SEARCH_TERMS = [
 # 22 terms x 2 locations = 44 combos already; widening locations scales fast.
 # See sources/jobspy_common.py for the combo-count math.
 LOCATIONS = ["Bengaluru, India", "India"]
-JOBSPY_SITES = ["indeed", "linkedin", "google"]  # glassdoor/zip_recruiter removed — confirmed 100% blocked from Actions
+JOBSPY_SITES = ["linkedin", "google"]  # indeed removed at user request; glassdoor/zip_recruiter removed earlier — confirmed 100% blocked from Actions
 RESULTS_PER_SITE = 30
 HOURS_OLD = 24
 JOBSPY_CALL_TIMEOUT_SECONDS = 90

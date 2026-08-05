@@ -1,5 +1,5 @@
 """
-Shared jobspy plumbing used by indeed.py, linkedin.py, and google.py — they
+Shared jobspy plumbing used by linkedin.py and google.py — they
 all go through one scrape_jobs() call per term/location combo (that's how
 the jobspy library batches multiple sites in a single request), so rather
 than triplicate the fetch loop, this module does the real work and the
@@ -15,7 +15,7 @@ from utils.logging_setup import get_logger
 
 log = get_logger("jobspy")
 
-_cached_df = None  # simple process-level cache — indeed/linkedin/google sources
+_cached_df = None  # simple process-level cache — linkedin/google sources
                     # each need this data but must not trigger 3x the real scraping
 
 
@@ -27,15 +27,14 @@ def _scrape_one_combo(term: str, location: str):
         location=location,
         results_wanted=config.RESULTS_PER_SITE,
         hours_old=config.HOURS_OLD,
-        country_indeed="India",
         linkedin_fetch_description=True,
     )
 
 
 def fetch_all_jobspy_listings() -> pd.DataFrame:
-    """Returns a combined DataFrame with a 'source' column (Indeed/Linkedin/
+    """Returns a combined DataFrame with a 'source' column (Linkedin/
     Google) so each thin wrapper source can filter to just its own rows.
-    Cached at module level — indeed.py, linkedin.py, and google.py each
+    Cached at module level — linkedin.py and google.py each
     call this independently, but only the first call does real work."""
     global _cached_df
     if _cached_df is not None:
