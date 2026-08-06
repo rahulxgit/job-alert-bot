@@ -69,6 +69,13 @@ def dedupe(listings: list[JobListing]) -> list[JobListing]:
     return unique
 
 
+def _source_breakdown(listings: list[JobListing]) -> dict:
+    counts: dict = {}
+    for listing in listings:
+        counts[listing.source] = counts.get(listing.source, 0) + 1
+    return counts
+
+
 def run_pipeline():
     log.info("Fetching from all sources...")
     all_listings, source_counts = fetch_all()
@@ -78,6 +85,7 @@ def run_pipeline():
 
     shortlist = prefilter(all_listings)
     log.info(f"{len(shortlist)} passed the keyword pre-filter (sent for AI review)")
+    log.info(f"  by source: {_source_breakdown(shortlist)}")
 
     if not shortlist:
         log.info("Nothing to review — no matches today.")
@@ -98,6 +106,7 @@ def run_pipeline():
 
     reviewed = review_candidates(unseen)
     log.info(f"{len(reviewed)} passed AI fit review (score >= {config.LLM_FIT_THRESHOLD})")
+    log.info(f"  by source: {_source_breakdown(reviewed)}")
 
     # Defensive re-check right before writing — insurance against an
     # overlapping run (the workflow's concurrency guard should prevent
