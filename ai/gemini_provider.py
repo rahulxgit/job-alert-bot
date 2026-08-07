@@ -1,8 +1,7 @@
-"""Primary AI provider — Gemini free tier. Retries on 429 with backoff
-UNLESS skip_retries is set (see evaluator.py's adaptive quota detection:
-once a run confirms the daily quota is exhausted, retrying is pointless
-and wastes ~90s/candidate — confirmed by a real run where this cost 80+
-minutes of pure waiting before this adaptation was added)."""
+"""Fallback AI provider — Gemini free tier. Called only when the primary
+AI gateway fails. Retries on 429 with backoff UNLESS skip_retries is set
+(see evaluator.py's adaptive quota detection: once a run confirms Gemini's
+daily quota is exhausted even as a fallback, retrying is pointless)."""
 import json
 import requests
 

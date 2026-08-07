@@ -68,12 +68,12 @@ keyword pre-filter (cheap) — cuts hundreds of listings down to ~55 candidates
         ↓
 dedup against Google Sheet — drop anything already logged before
         ↓
-Gemini API reads each remaining JD against my actual resume/profile,
-scores genuine fit 0-100, rejects unpaid internships and roles that
-need real professional experience
-        ↓ (if Gemini's retries are exhausted — e.g. daily quota gone)
-falls back to my self-hosted AI gateway (github.com/rahulxgit/ai-gateway),
-which itself already fails over across 7+ providers internally
+My self-hosted AI gateway (github.com/rahulxgit/ai-gateway) reads each
+remaining JD against my actual resume/profile first — it already fails
+over across 7+ providers internally, so this is the primary review path
+        ↓ (only if the gateway itself fails outright)
+falls back to Gemini directly, scores genuine fit 0-100, rejects unpaid
+internships and roles that need real professional experience
         ↓
 log the survivors to the Sheet
         ↓

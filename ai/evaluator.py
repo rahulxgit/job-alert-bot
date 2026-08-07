@@ -1,7 +1,8 @@
 """
-Orchestrates the full matching pipeline: cheap keyword pre-filter -> Gemini
-review (with adaptive quota detection) -> AI gateway fallback -> circuit
-breaker. This is the module that ties ai/base.py's providers together.
+Orchestrates the full matching pipeline: cheap keyword pre-filter -> AI
+gateway review (primary) -> Gemini fallback (with adaptive quota
+detection) -> circuit breaker. This is the module that ties
+ai/base.py's providers together.
 """
 import time
 import config
@@ -77,45 +78,46 @@ def prefilter(listings: list[JobListing], min_score: int = 3) -> list[JobListing
 
 
 def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> tuple:
-    """Returns (verdict, hit_rate_limit_bool)."""
+    """Returns (verdict, gemini_hit_rate_limit_bool). Gateway is primary —
+    tried first for every candidate. Gemini is the fallback, only called
+    when the gateway itself fails (not just says no — a real failure)."""
     prompt = _build_prompt(listing)
-    verdict = _gemini.evaluate(prompt, skip_retries=skip_gemini_retries)
+    verdict = _gateway.evaluate(prompt)
 
-    if verdict.hit_rate_limit:
+    if verdict is not None:
+        return verdict, False
+
+    # Gateway failed outright — fall back to Gemini
+    log.warning(f"gateway failed for '{listing.title}' — falling back to Gemini")
+    gemini_verdict = _gemini.evaluate(prompt, skip_retries=skip_gemini_retries)
+
+    if gemini_verdict.hit_rate_limit:
         if skip_gemini_retries:
-            log.info(f"Gemini still exhausted for '{listing.title}' — going straight to AI gateway")
-        else:
-            log.warning(f"'{listing.title}' rate-limited after retries — falling back to AI gateway")
-        fallback = _gateway.evaluate(prompt)
-        if fallback is not None:
-            return fallback, True
-        from models import FitVerdict
-        return FitVerdict(reason="all LLM providers failed — not evaluated"), True
+            log.info(f"Gemini (fallback) still exhausted for '{listing.title}'")
+        return gemini_verdict, True
 
-    if verdict.reason == "evaluation failed":
-        fallback = _gateway.evaluate(prompt)
-        if fallback is not None:
-            return fallback, False
+    if gemini_verdict.reason == "evaluation failed":
         from models import FitVerdict
         return FitVerdict(reason="all LLM providers failed — not evaluated"), False
 
-    return verdict, False
+    return gemini_verdict, False
 
 
 def review_candidates(listings: list[JobListing]) -> list[JobListing]:
-    """Runs the full Gemini/gateway review with adaptive quota detection
-    and the rate-limit circuit breaker. Mutates and returns only listings
-    that pass LLM_FIT_THRESHOLD."""
+    """Runs the full gateway/Gemini review with adaptive quota detection
+    (for when Gemini is hit repeatedly as fallback) and the rate-limit
+    circuit breaker. Mutates and returns only listings that pass
+    LLM_FIT_THRESHOLD."""
     passed = []
     consecutive_failures = 0
     gemini_confirmed_exhausted = False
 
     for listing in listings:
-        verdict, hit_rate_limit = evaluate_listing(listing, skip_gemini_retries=gemini_confirmed_exhausted)
+        verdict, gemini_hit_rate_limit = evaluate_listing(listing, skip_gemini_retries=gemini_confirmed_exhausted)
 
-        if hit_rate_limit and not gemini_confirmed_exhausted:
+        if gemini_hit_rate_limit and not gemini_confirmed_exhausted:
             gemini_confirmed_exhausted = True
-            log.info("Gemini's quota confirmed exhausted for this run — skipping retry waits on all remaining candidates")
+            log.info("Gemini (fallback) quota confirmed exhausted for this run — skipping its retry waits for the rest of the run")
 
         listing.fit_score = verdict.fit_score
         listing.fresher_appropriate = verdict.is_fresher_appropriate
@@ -127,15 +129,20 @@ def review_candidates(listings: list[JobListing]) -> list[JobListing]:
             consecutive_failures = 0
 
         if consecutive_failures >= config.CONSECUTIVE_RATE_LIMIT_BREAKER:
-            log.warning(f"{config.CONSECUTIVE_RATE_LIMIT_BREAKER} candidates in a row failed on BOTH Gemini and the gateway — "
+            log.warning(f"{config.CONSECUTIVE_RATE_LIMIT_BREAKER} candidates in a row failed on BOTH the gateway and Gemini — "
                         f"stopping here rather than burning the run's time budget. Remaining candidates picked up next run.")
             break
 
         if verdict.fit_score >= config.LLM_FIT_THRESHOLD and verdict.is_fresher_appropriate:
             passed.append(listing)
 
-        if not gemini_confirmed_exhausted:
-            time.sleep(4.5)  # free-tier Gemini pacing (~15 req/min)
+        # No blanket pacing needed here anymore — that 4.5s delay was
+        # specifically calibrated for Gemini's free-tier RPM limit back
+        # when it was called for every single candidate. Now the gateway
+        # (not rate-limited the same way) is primary, so Gemini is only
+        # called occasionally as fallback — pace only those calls.
+        if gemini_hit_rate_limit and not gemini_confirmed_exhausted:
+            time.sleep(4.5)
 
     passed.sort(key=lambda l: l.fit_score, reverse=True)
     return passed
