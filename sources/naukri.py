@@ -23,11 +23,22 @@ class NaukriSource(JobSource):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "application/json",
             "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
             "Referer": "https://www.naukri.com/software-developer-fresher-jobs",
+            "Origin": "https://www.naukri.com",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
             "appid": "109",
             "systemid": "Naukri",
             "clientid": "d3skt0p",
         }
+        # Naukri actively fingerprints requests missing the headers above.
+        # This closes the gap between "obviously a script" and "looks like
+        # a browser tab", but it still 406s from datacenter IPs (GitHub
+        # Actions) fairly often — that's IP reputation, not headers, and
+        # isn't fixable without a residential proxy. Treat 0 here the same
+        # way Wellfound is already treated: expected, not a bug.
 
         for term in config.NAUKRI_SEARCH_TERMS:
             params = {

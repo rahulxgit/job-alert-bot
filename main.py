@@ -23,6 +23,8 @@ from sources.greenhouse import GreenhouseSource
 from sources.lever import LeverSource
 from sources.youtube import YouTubeSource
 from sources.linkedin_posts import LinkedInPostsSource
+from sources.arbeitnow import ArbeitnowSource
+from sources.remoteok import RemoteOKSource
 from ai.evaluator import prefilter, review_candidates
 from enrichment.recruiter_email import enrich_with_emails
 from sheets.google_sheets import get_sheet, get_seen_urls, log_new_jobs
@@ -38,6 +40,7 @@ ALL_SOURCES = [
     LinkedInSource(), GoogleJobsSource(),
     InternshalaSource(), NaukriSource(), WellfoundSource(),
     GreenhouseSource(), LeverSource(), YouTubeSource(), LinkedInPostsSource(),
+    ArbeitnowSource(), RemoteOKSource(),
 ]
 
 

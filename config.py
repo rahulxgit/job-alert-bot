@@ -46,8 +46,78 @@ WELLFOUND_ROLE_SLUGS = ["software-engineer", "full-stack-engineer", "backend-eng
 # Add a company once its board token is confirmed: visit
 # job-boards.greenhouse.io/<token>/ or jobs.lever.co/<token> — if it loads,
 # that's the token. Wrong/missing tokens just return 0, harmless.
-GREENHOUSE_BOARDS = {"postman": "postman"}
-LEVER_BOARDS = {}
+# These two sources are the most reliable in the whole pipeline — real public
+# APIs, no anti-bot, no rate limiting. Was previously just {"postman": "postman"}
+# and {} — basically unconfigured. Expanded to companies that (a) are known to
+# use Greenhouse/Lever and (b) actually hire freshers/SDE-1s. Tokens are
+# best-effort; a wrong token just returns 0 for that company (harmless), so
+# it's safe to add more over time — verify by visiting the board URL above.
+GREENHOUSE_BOARDS = {
+    "postman": "postman",
+    "razorpay": "razorpay",
+    "browserstack": "browserstack",
+    "freshworks": "freshworks",
+    "cred": "cred",
+    "meesho": "meesho",
+    "groww": "groww",
+    "sprinklr": "sprinklr",
+    "clearbit": "clearbit",
+    "gitlab": "gitlab",
+    "notion": "notion",
+    "airbyte": "airbyte",
+    "grafanalabs": "grafanalabs",
+    "cockroachlabs": "cockroachlabs",
+    "hashicorp": "hashicorp",
+    "figma": "figma",
+    "asana": "asana",
+    "coinbase": "coinbase",
+    "discord": "discord",
+    "reddit": "reddit",
+    "robinhood": "robinhood",
+    "stripe": "stripe",
+    "affirm": "affirm",
+    "brex": "brex",
+    "plaid": "plaid",
+    "rippling": "rippling",
+    "webflow": "webflow",
+    "zapier": "zapier",
+}
+LEVER_BOARDS = {
+    "sarvam": "sarvam",
+    "zepto": "zepto",
+    "urbancompany": "urbancompany",
+    "spinny": "spinny",
+    "khatabook": "khatabook",
+    "cure.fit": "curefit",
+    "netskope": "netskope",
+    "highradius": "highradius",
+    "clearfeed": "clearfeed",
+    "leena-ai": "leenaai",
+    "attentive": "attentive",
+    "loom": "loom",
+    "ramp": "ramp",
+    "vanta": "vanta",
+    "mixpanel": "mixpanel",
+    "amplitude": "amplitude",
+    "netlify": "netlify",
+    "plaid": "plaid",
+}
+
+# --- Arbeitnow (free, public, no auth, no rate limit) -----------------------
+# https://arbeitnow.com/api/job-board-api — mostly remote/EU-friendly roles,
+# but genuinely open and unrestricted, so worth the coverage.
+ARBEITNOW_KEYWORDS = [
+    "react", "node", "full stack", "frontend", "backend", "javascript",
+    "typescript", "software engineer", "junior", "graduate",
+]
+
+# --- RemoteOK (free, public, no auth, no rate limit) -------------------------
+# https://remoteok.com/api — global remote listings, filtered client-side
+# by tag/title since the API itself has no query params.
+REMOTEOK_KEYWORDS = [
+    "react", "node", "full stack", "frontend", "backend", "javascript",
+    "typescript", "junior", "entry level", "software engineer",
+]
 
 # --- YouTube ------------------------------------------------------------
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
