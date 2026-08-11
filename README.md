@@ -1,8 +1,9 @@
 # Job Alert Bot
 
 Scrapes LinkedIn, Google Jobs, Internshala (all-India), Naukri,
-(best-effort) Wellfound, optional LinkedIn recruiter posts, and
-Greenhouse/Lever company career pages every morning. (Glassdoor and
+(best-effort) Wellfound, optional LinkedIn recruiter posts,
+Greenhouse/Lever company career pages, Arbeitnow, RemoteOK, and
+(optional) Firecrawl web search/extraction every morning. (Glassdoor and
 ZipRecruiter were tried and removed — both are fully blocked from GitHub
 Actions, see limitations below.) Runs a cheap keyword pre-filter, then
 sends the shortlist to Gemini (free tier) to actually read each job
@@ -508,6 +509,90 @@ lower worst-case ceiling) is the first lever to pull.
   `RecursionError` (caught gracefully, but still wasted the attempt) or
   just running slowly on a large page, eating into the run's time budget.
   Capped at depth 25.
+
+## Firecrawl integration (web research/extraction — additive)
+
+Firecrawl is a discovery layer, not another dedicated scraper like Naukri
+or Greenhouse. Where the other sources hit one fixed site each, Firecrawl
+runs a batch of web searches (`role + fresher + location`, e.g. "React
+Developer fresher Bangalore") through Firecrawl's `/v1/search` API, which
+returns each result's URL, title, and scraped page content in a single
+call. Every result it finds is normalized into the same `JobListing`
+shape everything else uses, so it flows through the exact same pipeline —
+dedupe, keyword pre-filter, AI fit review (against `profile-data.json`,
+same as every other source), recruiter-email enrichment, Sheet logging,
+digest email. There is no separate Firecrawl pipeline or matching logic.
+
+```
+Naukri / LinkedIn / Greenhouse / Lever / ... (existing dedicated sources)
+                              +
+                Firecrawl (broad web search/extraction)
+                              ↓
+                     normalized JobListing
+                              ↓
+                  existing pipeline (unchanged)
+```
+
+**Why the REST API and not the MCP server:** the Firecrawl MCP server is
+built for an interactive session where a client approves each tool call —
+there's no human in the loop on a GitHub Actions cron run. The `/v1/search`
+API gives the identical capability (search + scrape in one request)
+without needing a live MCP client, so it's the CI-compatible way to get
+the same thing. If you're using this profile/config from an interactive
+Claude session instead, Firecrawl's MCP `search` tool does the same job.
+
+### Enabling it
+
+1. Sign up at https://www.firecrawl.dev and copy an API key (starts with `fc-`).
+2. Add it as a GitHub repo secret named `FIRECRAWL_API_KEY` (Settings →
+   Secrets and variables → Actions).
+3. That's it — the source auto-detects the key and turns itself on. Omit
+   the secret entirely to skip Firecrawl and keep running every other
+   source unchanged.
+
+### Configuration
+
+All optional, all with safe defaults — set these as repo secrets or
+environment variables only if you want to change the defaults:
+
+| Variable | Default | What it controls |
+|---|---|---|
+| `FIRECRAWL_API_KEY` | (none) | Required to enable the source at all |
+| `FIRECRAWL_ENABLED` | `true` | Set to `false` to turn it off without removing the key |
+| `FIRECRAWL_MAX_RESULTS_PER_QUERY` | `8` | Results pulled per search query |
+| `FIRECRAWL_MAX_QUERIES` | `20` | How many of the generated role/location searches actually run |
+| `FIRECRAWL_MAX_TOTAL_RESULTS` | `120` | Hard ceiling across the whole source, checked as queries run so it can stop early |
+| `FIRECRAWL_TIMEOUT` | `30` | Per-request timeout (seconds) |
+
+The actual search queries are built in `config.py` from
+`FIRECRAWL_ROLE_TERMS x FIRECRAWL_LOCATIONS` (roles like "React Developer",
+"Full Stack Developer", "Software Engineer" fresher-qualified, across
+Bangalore/Pune/India) — edit those two lists directly to change what it
+searches for, rather than a runtime flag.
+
+### Local testing
+
+```bash
+export FIRECRAWL_API_KEY="fc-..."
+python -c "from sources.firecrawl import FirecrawlSource; rows = FirecrawlSource().fetch_listings(); print(len(rows)); print(rows[0] if rows else 'no results')"
+```
+
+Run just its tests (fully mocked, no real API calls, no key needed):
+
+```bash
+pytest tests/test_firecrawl.py -v
+```
+
+### How it differs from the dedicated sources
+
+Naukri/Greenhouse/Lever/etc. each know exactly one site's structure and
+hit it directly — reliable when the site cooperates, blind everywhere
+else. Firecrawl is broad instead of deep: it doesn't know any one site's
+markup, it searches the open web and scrapes whatever comes back, so it
+picks up company career pages, smaller job boards, and postings the
+dedicated sources were never built to reach — at the cost of being noisier
+and needing the existing pre-filter/AI-review stages to actually be
+useful. It's additive coverage, not a replacement for anything above.
 
 ## Known Sheet setup issue
 

@@ -41,4 +41,5 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           AI_GATEWAY_URL: ${{ secrets.AI_GATEWAY_URL }}
           APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
+          FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
         run: python -u main.py

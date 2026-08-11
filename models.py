@@ -19,6 +19,11 @@ class JobListing:
     reason: str = ""
     recruiter_email: str = ""
 
+    # optional metadata — not every source can populate these, so both
+    # default to "" and nothing downstream should assume they're set
+    posting_date: str = ""
+    employment_type: str = ""
+
     def to_dict(self) -> dict:
         return asdict(self)
 

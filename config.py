@@ -119,6 +119,47 @@ REMOTEOK_KEYWORDS = [
     "typescript", "junior", "entry level", "software engineer",
 ]
 
+# --- Firecrawl (web research/extraction — additive discovery source) ------
+# Firecrawl's /v1/search endpoint returns search results with page content
+# scraped in the same call, so a single request per query gives back both
+# the URL and enough text to build a real JobListing.description without a
+# second scrape round-trip. This is purely additive coverage on top of the
+# dedicated Naukri/LinkedIn/Greenhouse/etc. sources, not a replacement.
+FIRECRAWL_API_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
+FIRECRAWL_ENABLED = os.environ.get("FIRECRAWL_ENABLED", "true").lower() != "false"
+FIRECRAWL_MAX_RESULTS_PER_QUERY = int(os.environ.get("FIRECRAWL_MAX_RESULTS_PER_QUERY", "8"))
+FIRECRAWL_MAX_QUERIES = int(os.environ.get("FIRECRAWL_MAX_QUERIES", "20"))
+FIRECRAWL_MAX_TOTAL_RESULTS = int(os.environ.get("FIRECRAWL_MAX_TOTAL_RESULTS", "120"))
+FIRECRAWL_TIMEOUT = int(os.environ.get("FIRECRAWL_TIMEOUT", "30"))
+
+FIRECRAWL_ROLE_TERMS = [
+    "React Developer", "React.js Developer", "Frontend Developer",
+    "Frontend Engineer", "Full Stack Developer", "Full Stack Engineer",
+    "Software Developer", "Software Engineer", "MERN Developer",
+    "Associate Software Engineer", "Graduate Software Engineer",
+]
+FIRECRAWL_LOCATIONS = ["Bangalore", "Pune", "India"]
+
+# Built as one combined list at import time rather than nested loops
+# scattered through the source module — easier to read, easier to trim.
+# Capped by FIRECRAWL_MAX_QUERIES at call time, not here, so this list can
+# stay expressive without needing to hand-count it.
+FIRECRAWL_SEARCH_QUERIES = [
+    f"{role} fresher {location}"
+    for location in FIRECRAWL_LOCATIONS
+    for role in FIRECRAWL_ROLE_TERMS
+]
+
+# Domains Firecrawl results are scored/ordered by, tier 1 first — used only
+# to sort which queries' results get scraped first if a run is trimmed down
+# by FIRECRAWL_MAX_TOTAL_RESULTS, not to exclude anything outright.
+FIRECRAWL_PRIORITY_DOMAINS = [
+    "naukri.com",  # tier 1
+    "greenhouse.io", "lever.co", "myworkdayjobs.com",  # tier 2 — company career pages
+    "linkedin.com",  # tier 3
+    "indeed.com", "wellfound.com",  # tier 4
+]
+
 # --- YouTube ------------------------------------------------------------
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 YOUTUBE_CHANNEL_URLS = [
