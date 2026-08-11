@@ -48,19 +48,21 @@ def test_normalizes_into_job_listings(mock_post):
     config.FIRECRAWL_SEARCH_QUERIES = ["React Developer fresher Bangalore"]
     mock_post.return_value = _mock_response({
         "success": True,
-        "data": [
-            {
-                "url": "https://boards.greenhouse.io/acme/jobs/123?utm_source=x",
-                "title": "React Developer at Acme",
-                "description": "short snippet",
-                "markdown": "Full job description text about React and Node fresher role.",
-            },
-            {
-                "url": "https://instagram.com/somepost",
-                "title": "not a job",
-                "markdown": "",
-            },
-        ],
+        "data": {
+            "web": [
+                {
+                    "url": "https://boards.greenhouse.io/acme/jobs/123?utm_source=x",
+                    "title": "React Developer at Acme",
+                    "description": "short snippet",
+                    "markdown": "Full job description text about React and Node fresher role.",
+                },
+                {
+                    "url": "https://instagram.com/somepost",
+                    "title": "not a job",
+                    "markdown": "",
+                },
+            ]
+        },
     })
     try:
         rows = FirecrawlSource().fetch_listings()
@@ -110,7 +112,7 @@ def test_duplicate_urls_within_source_are_deduped(mock_post):
         "title": "Full Stack Developer - Acme",
         "markdown": "Full stack role description.",
     }
-    mock_post.return_value = _mock_response({"success": True, "data": [same_result]})
+    mock_post.return_value = _mock_response({"success": True, "data": {"web": [same_result]}})
     try:
         rows = FirecrawlSource().fetch_listings()
     finally:
@@ -127,6 +129,41 @@ def test_is_job_like_rejects_social_domains():
     assert _is_job_like("https://boards.greenhouse.io/acme/jobs/1") is True
     assert _is_job_like("https://instagram.com/p/xyz") is False
     assert _is_job_like("") is False
+
+
+@patch("sources.firecrawl.requests.post")
+def test_calls_v2_search_endpoint_with_correct_payload(mock_post):
+    """Locks in the verified-current API contract: POST /v2/search,
+    Bearer auth, sources=web, scrapeOptions requesting markdown."""
+    from sources.firecrawl import SEARCH_URL
+    original_key, original_queries = config.FIRECRAWL_API_KEY, config.FIRECRAWL_SEARCH_QUERIES
+    config.FIRECRAWL_API_KEY = "fc-test-key"
+    config.FIRECRAWL_SEARCH_QUERIES = ["Software Engineer fresher Bangalore"]
+    mock_post.return_value = _mock_response({"success": True, "data": {"web": []}})
+    try:
+        FirecrawlSource().fetch_listings()
+    finally:
+        config.FIRECRAWL_API_KEY, config.FIRECRAWL_SEARCH_QUERIES = original_key, original_queries
+
+    assert SEARCH_URL == "https://api.firecrawl.dev/v2/search"
+    call_args = mock_post.call_args
+    assert call_args.args[0] == "https://api.firecrawl.dev/v2/search"
+    assert call_args.kwargs["headers"]["Authorization"] == "Bearer fc-test-key"
+    body = call_args.kwargs["json"]
+    assert body["query"] == "Software Engineer fresher Bangalore"
+    assert body["sources"] == [{"type": "web"}]
+    assert "markdown" in body["scrapeOptions"]["formats"]
+
+
+def test_guess_company_regex_does_not_crash_on_edge_case_urls():
+    """Regression check for the escaped-dot regex in _guess_company —
+    make sure odd URLs (no path, trailing dot, no domain at all) never
+    raise instead of just returning a best-effort guess."""
+    from sources.firecrawl import _guess_company
+    assert _guess_company("Some Title", "https://acme.com/jobs/1") == "Acme"
+    assert _guess_company("Some Title", "not-a-url") == ""
+    assert _guess_company("Some Title", "") == ""
+    assert _guess_company("React Developer at Zeta Corp", "https://x.io/1") == "Zeta Corp"
 
 
 @patch("sources.firecrawl.requests.post")

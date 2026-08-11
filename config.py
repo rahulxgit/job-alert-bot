@@ -120,16 +120,21 @@ REMOTEOK_KEYWORDS = [
 ]
 
 # --- Firecrawl (web research/extraction — additive discovery source) ------
-# Firecrawl's /v1/search endpoint returns search results with page content
-# scraped in the same call, so a single request per query gives back both
-# the URL and enough text to build a real JobListing.description without a
-# second scrape round-trip. This is purely additive coverage on top of the
-# dedicated Naukri/LinkedIn/Greenhouse/etc. sources, not a replacement.
+# Firecrawl's /v2/search endpoint (verified against Firecrawl's current API
+# reference) returns search results with page content scraped in the same
+# call, so a single request per query gives back both the URL and enough
+# text to build a real JobListing.description without a second scrape
+# round-trip. This is purely additive coverage on top of the dedicated
+# Naukri/LinkedIn/Greenhouse/etc. sources, not a replacement.
+#
+# /v2/search has no cursor/offset pagination — limit is capped at 100 per
+# call. Breadth comes from running many distinct queries
+# (FIRECRAWL_MAX_QUERIES), not from paging one query.
 FIRECRAWL_API_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
 FIRECRAWL_ENABLED = os.environ.get("FIRECRAWL_ENABLED", "true").lower() != "false"
-FIRECRAWL_MAX_RESULTS_PER_QUERY = int(os.environ.get("FIRECRAWL_MAX_RESULTS_PER_QUERY", "8"))
+FIRECRAWL_MAX_RESULTS_PER_QUERY = min(int(os.environ.get("FIRECRAWL_MAX_RESULTS_PER_QUERY", "10")), 100)
 FIRECRAWL_MAX_QUERIES = int(os.environ.get("FIRECRAWL_MAX_QUERIES", "20"))
-FIRECRAWL_MAX_TOTAL_RESULTS = int(os.environ.get("FIRECRAWL_MAX_TOTAL_RESULTS", "120"))
+FIRECRAWL_MAX_TOTAL_RESULTS = int(os.environ.get("FIRECRAWL_MAX_TOTAL_RESULTS", "150"))
 FIRECRAWL_TIMEOUT = int(os.environ.get("FIRECRAWL_TIMEOUT", "30"))
 
 FIRECRAWL_ROLE_TERMS = [

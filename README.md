@@ -515,13 +515,14 @@ lower worst-case ceiling) is the first lever to pull.
 Firecrawl is a discovery layer, not another dedicated scraper like Naukri
 or Greenhouse. Where the other sources hit one fixed site each, Firecrawl
 runs a batch of web searches (`role + fresher + location`, e.g. "React
-Developer fresher Bangalore") through Firecrawl's `/v1/search` API, which
-returns each result's URL, title, and scraped page content in a single
-call. Every result it finds is normalized into the same `JobListing`
-shape everything else uses, so it flows through the exact same pipeline —
-dedupe, keyword pre-filter, AI fit review (against `profile-data.json`,
-same as every other source), recruiter-email enrichment, Sheet logging,
-digest email. There is no separate Firecrawl pipeline or matching logic.
+Developer fresher Bangalore") through Firecrawl's `POST /v2/search` API,
+which returns each result's URL, title, and scraped page content in a
+single call. Every result it finds is normalized into the same
+`JobListing` shape everything else uses, so it flows through the exact
+same pipeline — dedupe, keyword pre-filter, AI fit review (against
+`profile-data.json`, same as every other source), recruiter-email
+enrichment, Sheet logging, digest email. There is no separate Firecrawl
+pipeline or matching logic.
 
 ```
 Naukri / LinkedIn / Greenhouse / Lever / ... (existing dedicated sources)
@@ -535,11 +536,24 @@ Naukri / LinkedIn / Greenhouse / Lever / ... (existing dedicated sources)
 
 **Why the REST API and not the MCP server:** the Firecrawl MCP server is
 built for an interactive session where a client approves each tool call —
-there's no human in the loop on a GitHub Actions cron run. The `/v1/search`
-API gives the identical capability (search + scrape in one request)
-without needing a live MCP client, so it's the CI-compatible way to get
-the same thing. If you're using this profile/config from an interactive
-Claude session instead, Firecrawl's MCP `search` tool does the same job.
+there's no human in the loop on a GitHub Actions cron run. The
+`/v2/search` API gives the identical capability (search + scrape in one
+request) without needing a live MCP client, so it's the CI-compatible way
+to get the same thing. If you're using this profile/config from an
+interactive Claude session instead, Firecrawl's MCP `search` tool does
+the same job.
+
+**On "as many jobs as possible":** Firecrawl's `/v2/search` endpoint (as
+of its current API reference) has no cursor/offset pagination — `limit`
+is capped at 100 results per call, full stop. So breadth here comes from
+running many distinct queries (`FIRECRAWL_MAX_QUERIES`), not from paging
+a single query. `config.py` builds one query per role x location
+combination (currently 11 roles x 3 locations = 33 possible queries,
+trimmed to `FIRECRAWL_MAX_QUERIES` per run), which is the actual lever
+for widening discovery — raise `FIRECRAWL_MAX_QUERIES` or add more
+roles/locations to `FIRECRAWL_ROLE_TERMS`/`FIRECRAWL_LOCATIONS` rather
+than looking for a pagination parameter that doesn't exist on this
+endpoint.
 
 ### Enabling it
 
@@ -559,9 +573,9 @@ environment variables only if you want to change the defaults:
 |---|---|---|
 | `FIRECRAWL_API_KEY` | (none) | Required to enable the source at all |
 | `FIRECRAWL_ENABLED` | `true` | Set to `false` to turn it off without removing the key |
-| `FIRECRAWL_MAX_RESULTS_PER_QUERY` | `8` | Results pulled per search query |
+| `FIRECRAWL_MAX_RESULTS_PER_QUERY` | `10` | Results pulled per search query — hard-capped at 100 (Firecrawl's own `/v2/search` ceiling) |
 | `FIRECRAWL_MAX_QUERIES` | `20` | How many of the generated role/location searches actually run |
-| `FIRECRAWL_MAX_TOTAL_RESULTS` | `120` | Hard ceiling across the whole source, checked as queries run so it can stop early |
+| `FIRECRAWL_MAX_TOTAL_RESULTS` | `150` | Hard ceiling across the whole source, checked as queries run so it can stop early |
 | `FIRECRAWL_TIMEOUT` | `30` | Per-request timeout (seconds) |
 
 The actual search queries are built in `config.py` from

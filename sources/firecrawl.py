@@ -5,26 +5,39 @@ Firecrawl = web research + search + extraction. It's meant to widen
 discovery beyond the sources that already have a dedicated scraper
 (Naukri, LinkedIn, Greenhouse, Lever, etc.), not replace any of them.
 
-Runs entirely through Firecrawl's REST API (/v1/search), not the MCP
+Runs entirely through Firecrawl's REST API (POST /v2/search), not the MCP
 server — the MCP server is designed for an interactive Claude session
 with a human approving tool calls, which doesn't exist in an unattended
 GitHub Actions cron run. The API gives the exact same underlying
 capability (search + scrape in one call) without needing a live MCP
 client, so it's the right fit for CI. If you're driving this from an
-interactive Claude session instead, the Firecrawl MCP server's `search`
-tool does the same job.
+interactive Claude session instead, Firecrawl's MCP `search` tool does
+the same job.
 
-/v1/search returns each result's URL, title, and (with scrapeOptions)
-the page's scraped markdown content in the same call — one request per
-query gets both discovery and enough real JD text for the existing AI
-reviewer to actually judge fit against, not just a title/snippet.
+Verified against Firecrawl's current (v2) API reference as of this
+writing — /v1/search is legacy; the live endpoint is /v2/search and the
+response nests results under data.web[] (not data[] directly), since v2
+also supports images/news as separate arrays via the `sources` param.
+This source only asks for `sources: ["web"]`.
+
+/v2/search returns each web result's URL, title, description, and (with
+scrapeOptions) the page's scraped markdown content in the same call — one
+request per query gets both discovery and enough real JD text for the
+existing AI reviewer to actually judge fit against, not just a snippet.
+
+No cursor-based pagination exists on /v2/search itself (confirmed against
+the current OpenAPI spec — there's a `limit`, capped at 100 per call, but
+no offset/page parameter). Breadth here comes from running many distinct
+role x location queries, not from paging a single query, so
+FIRECRAWL_MAX_QUERIES is the real lever for "as many jobs as possible",
+with FIRECRAWL_MAX_RESULTS_PER_QUERY (<=100) as the per-query width.
 
 Bounded on three axes so a run can't blow past the ~55-minute Actions
 budget or burn through Firecrawl credits: FIRECRAWL_MAX_QUERIES (how many
 searches run at all), FIRECRAWL_MAX_RESULTS_PER_QUERY (results per
-search), FIRECRAWL_MAX_TOTAL_RESULTS (hard ceiling across the whole
-source, checked as queries run so it can stop early instead of always
-using its full query budget).
+search, hard-capped at Firecrawl's own limit of 100), FIRECRAWL_MAX_TOTAL_RESULTS
+(hard ceiling across the whole source, checked as queries run so it can
+stop early instead of always using its full query budget).
 """
 import re
 import time
@@ -37,7 +50,8 @@ from utils.logging_setup import get_logger
 
 log = get_logger("firecrawl")
 
-SEARCH_URL = "https://api.firecrawl.dev/v1/search"
+SEARCH_URL = "https://api.firecrawl.dev/v2/search"
+FIRECRAWL_HARD_LIMIT_PER_QUERY = 100  # Firecrawl's own /v2/search ceiling
 
 # Same blocklist spirit as utils/text.py's YouTube link filter — obvious
 # noise domains that occasionally turn up in job-flavored search results
@@ -102,12 +116,16 @@ def _guess_location(text: str) -> str:
 
 
 def _search_one_query(query: str, limit: int) -> list:
+    limit = min(limit, FIRECRAWL_HARD_LIMIT_PER_QUERY)
     resp = requests.post(
         SEARCH_URL,
         headers={"Authorization": f"Bearer {config.FIRECRAWL_API_KEY}", "Content-Type": "application/json"},
         json={
             "query": query,
             "limit": limit,
+            "sources": [{"type": "web"}],
+            "location": "India",
+            "country": "IN",
             "scrapeOptions": {"formats": ["markdown"], "onlyMainContent": True},
         },
         timeout=config.FIRECRAWL_TIMEOUT,
@@ -116,7 +134,9 @@ def _search_one_query(query: str, limit: int) -> list:
     data = resp.json()
     if not data.get("success", True):
         raise RuntimeError(data.get("error", "unknown Firecrawl error"))
-    return data.get("data", []) or []
+    # v2 nests results by source type: data.web[] / data.images[] / data.news[].
+    # We only ever request sources=["web"], so that's the only array read here.
+    return (data.get("data") or {}).get("web", []) or []
 
 
 class FirecrawlSource(JobSource):
