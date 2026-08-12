@@ -136,6 +136,11 @@ FIRECRAWL_MAX_RESULTS_PER_QUERY = min(int(os.environ.get("FIRECRAWL_MAX_RESULTS_
 FIRECRAWL_MAX_TOTAL_RESULTS = int(os.environ.get("FIRECRAWL_MAX_TOTAL_RESULTS", "150"))
 FIRECRAWL_TIMEOUT = int(os.environ.get("FIRECRAWL_TIMEOUT", "30"))
 
+# Safe free-tier budgets for aggregate page expansion and detail scraping
+FIRECRAWL_MAX_AGGREGATE_EXPANSIONS = int(os.environ.get("FIRECRAWL_MAX_AGGREGATE_EXPANSIONS", "10"))
+FIRECRAWL_MAX_LINKS_PER_AGGREGATE = int(os.environ.get("FIRECRAWL_MAX_LINKS_PER_AGGREGATE", "5"))
+FIRECRAWL_MAX_DETAIL_PAGES = int(os.environ.get("FIRECRAWL_MAX_DETAIL_PAGES", "50"))
+
 FIRECRAWL_ROLE_TERMS = [
     "SDE", "SDE-1", "Software Engineer", "Software Developer",
     "Full Stack Engineer", "Full Stack Developer", "Frontend Engineer",
