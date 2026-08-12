@@ -254,3 +254,19 @@ def test_api_key_never_appears_in_logs(mock_post, caplog):
     finally:
         config.FIRECRAWL_API_KEY, config.FIRECRAWL_SEARCH_QUERIES = original_key, original_queries
     assert "fc-super-secret-value" not in caplog.text
+
+def test_is_job_like_rejects_aggregates():
+    from sources.firecrawl import _is_job_like
+
+    # Reject these
+    assert _is_job_like("https://www.naukri.com/graduate-software-engineer-jobs") == False
+    assert _is_job_like("https://www.naukri.com/graduate-software-engineer-jobs-in-bengaluru-bangalore") == False
+    assert _is_job_like("https://www.naukri.com/mern-stack-jobs-in-pune-2") == False
+    assert _is_job_like("https://in.indeed.com/q-full-stack-developer-fresher-l-bengaluru,-karnataka-jobs.html") == False
+    assert _is_job_like("https://www.glassdoor.co.in/Job/bengaluru-entry-level-software-engineer-jobs-...") == False
+    assert _is_job_like("https://www.simplyhired.co.in/search?q=react+js+developer&l=pune") == False
+
+    # Accept these
+    assert _is_job_like("https://www.linkedin.com/jobs/view/4451665094") == True
+    assert _is_job_like("https://internshala.com/job/detail/fresher-reactjs-developer-job-in-bangalore-at-appscrip1774398609") == True
+    assert _is_job_like("https://cutshort.io/job/React-JS-Developer-Fresher-...") == True

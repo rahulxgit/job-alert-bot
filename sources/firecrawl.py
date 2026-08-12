@@ -106,8 +106,17 @@ def _is_job_like(url: str, title: str = "") -> bool:
         "job openings", "working at"
     ]
 
+    # Specific bad suffixes often found in aggregated sites
+    if "-jobs" in url_lower and not "/job/" in url_lower and not "/jobs/" in url_lower:
+        # e.g., naukri.com/graduate-software-engineer-jobs
+        return False
+    if "jobs.html" in url_lower:
+        return False
+    if "-jobs-" in url_lower:
+        # e.g. glassdoor.co.in/Job/bengaluru-entry-level-software-engineer-jobs-...
+        return False
+
     # If the URL is just the homepage or a generic /jobs/ page
-    # It usually doesn't have a deep path
     path = url.split("://")[-1].split("/")
     if len(path) <= 2 and "jobs" in url_lower:
         return False
