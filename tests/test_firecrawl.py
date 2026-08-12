@@ -54,6 +54,10 @@ def test_normalizes_into_job_listings(mock_post):
                     "url": "https://boards.greenhouse.io/acme/jobs/123?utm_source=x",
                     "title": "React Developer at Acme",
                     "description": "short snippet",
+                    "markdown": "Full job description text about React and Node fresher role.\nRequirements:\n- React\nApply now",
+
+                    "title": "React Developer at Acme",
+                    "description": "short snippet",
                     "markdown": "Full job description text about React and Node fresher role.",
                 },
                 {
@@ -110,7 +114,7 @@ def test_duplicate_urls_within_source_are_deduped(mock_post):
     same_result = {
         "url": "https://naukri.com/job/456?ref=abc",
         "title": "Full Stack Developer - Acme",
-        "markdown": "Full stack role description.",
+        "markdown": "Full stack role description.\nRequirements:\n- React\nApply now",
     }
     mock_post.return_value = _mock_response({"success": True, "data": {"web": [same_result]}})
     try:
@@ -225,7 +229,7 @@ def test_extracted_listings_carry_posting_date_when_present(mock_post):
             "web": [{
                 "url": "https://boards.greenhouse.io/acme/jobs/999",
                 "title": "React Developer at Acme",
-                "markdown": "React role, posted 1 day ago. React and Node fresher role.",
+                "markdown": "React role, posted 1 day ago. React and Node fresher role.\nRequirements:\n- React\nApply now",
             }]
         },
     })

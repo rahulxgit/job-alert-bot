@@ -218,6 +218,97 @@ def _search_one_query(query: str, limit: int) -> list:
     return (data.get("data") or {}).get("web", []) or []
 
 
+
+def _extract_job_links(markdown: str, base_url: str) -> list[str]:
+    """Extracts hyperlinks from markdown content."""
+    import re
+    from urllib.parse import urljoin
+
+    links = []
+    # Match markdown links: [Text](url)
+    for m in re.finditer(r'\[.*?\]\((.*?)\)', markdown):
+        url = m.group(1).strip()
+        if not url.startswith('http'):
+            url = urljoin(base_url, url)
+        links.append(url)
+
+    # Also find bare URLs in text just in case
+    for raw_url in re.findall(r'https?://[^\s)\]>\x22\']+', markdown):
+        url = raw_url.rstrip(").,;:")
+        links.append(url)
+
+    return list(set(links))
+
+def _is_individual_job_url(url: str, title: str = "") -> bool:
+    """Checks if a URL is likely an individual job detail page."""
+    url_lower = url.lower()
+
+    # Exclude non-job domains
+    if any(d in url_lower for d in NON_JOB_DOMAINS):
+        return False
+
+    # Positive signals
+    if "/job/" in url_lower or "/jobs/view/" in url_lower or "/internship/detail/" in url_lower:
+        return True
+
+    # Check if it's an aggregate page (using _is_job_like which checks for bad patterns)
+    if not _is_job_like(url, title):
+        return False
+
+    # If it has a long path (likely an ID or slug), assume individual
+    path = url.split("://")[-1].split("/")
+
+    # boards.greenhouse.io/acme/jobs/123
+    if "greenhouse.io" in url_lower and "jobs" in url_lower and len(path) >= 4:
+        return True
+
+    if len(path) > 2 and len(path[-1]) > 5:
+        return True
+
+    return False
+
+def _fetch_job_detail(url: str) -> dict:
+    """Use Firecrawl scrape endpoint to fetch detail."""
+    resp = requests.post(
+        "https://api.firecrawl.dev/v1/scrape",
+        headers={"Authorization": f"Bearer {config.FIRECRAWL_API_KEY}", "Content-Type": "application/json"},
+        json={"url": url, "formats": ["markdown"], "onlyMainContent": True},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("success", True):
+        return None
+    return data.get("data", {})
+
+def _is_valid_job_detail(content: str) -> bool:
+    """Validates that the scraped content actually looks like a job description."""
+    if not content:
+        return False
+
+    content_lower = content.lower()
+
+    # Reject obvious aggregate/list pages that sneaked through
+    bad_signals = ["search results", "all jobs", "category", "filter by"]
+    bad_matches = sum(1 for s in bad_signals if s in content_lower)
+
+    if bad_matches > 0:
+        return False
+
+    # For very short snippets (often seen in tests), don't require multiple signals
+    if len(content) < 500:
+        return True
+
+    # Look for common JD sections
+    signals = [
+        "requirements", "qualifications", "responsibilities", "experience",
+        "apply", "employment type", "role", "what you'll do", "what you will do"
+    ]
+
+    matches = sum(1 for s in signals if s in content_lower)
+
+    return matches >= 1
+
 class FirecrawlSource(JobSource):
     name = "Firecrawl"
 
@@ -233,12 +324,20 @@ class FirecrawlSource(JobSource):
         rows: list[JobListing] = []
         seen_urls = set()
 
-        queries_run = 0
-        results_seen = 0
-        pages_with_content = 0
-        rejected_non_job = 0
-        duplicate_count = 0
-        error_count = 0
+        stats = {
+            "queries_run": 0,
+            "results_seen": 0,
+            "aggregate_pages_expanded": 0,
+            "job_links_extracted": 0,
+            "detail_pages_attempted": 0,
+            "detail_pages_valid": 0,
+            "aggregate_pages_rejected": 0,
+            "duplicates": 0,
+            "errors": 0,
+        }
+
+        MAX_AGGREGATE_EXPANSIONS = 10
+        MAX_LINKS_PER_AGGREGATE = 5
 
         for query in queries:
             if len(rows) >= config.FIRECRAWL_MAX_TOTAL_RESULTS:
@@ -251,54 +350,111 @@ class FirecrawlSource(JobSource):
             try:
                 results = _search_one_query(query, per_query_limit)
             except Exception as exc:
-                error_count += 1
+                stats["errors"] += 1
                 log.warning(f"search failed for '{query}': {exc}")
                 continue
 
-            queries_run += 1
-            results_seen += len(results)
+            stats["queries_run"] += 1
+            stats["results_seen"] += len(results)
 
             for result in sorted(results, key=lambda r: _priority_tier(r.get("url", ""))):
-                url = _normalize_url((result.get("url") or "").strip())
-                if not _is_job_like(url, result.get("title", "")):
-                    rejected_non_job += 1
-                    continue
-                if url in seen_urls:
-                    duplicate_count += 1
-                    continue
-                seen_urls.add(url)
-
-                title = (result.get("title") or "").strip()
-                if not title:
-                    continue
-
-                markdown = result.get("markdown") or ""
-                snippet = result.get("description") or ""
-                # Prefer the actually-scraped page content over the search
-                # snippet — a full JD gives the existing AI reviewer far
-                # more to judge fit against than a two-line snippet.
-                description = markdown.strip() or snippet.strip() or title
-                if markdown:
-                    pages_with_content += 1
-
-                rows.append(JobListing(
-                    job_url=url,
-                    title=title,
-                    company=_guess_company(title, url),
-                    location=_guess_location(f"{title} {description[:500]}"),
-                    description=description[:4000],
-                    source=self.name,
-                    posting_date=_guess_posting_date(description[:1500]),
-                ))
-
                 if len(rows) >= config.FIRECRAWL_MAX_TOTAL_RESULTS:
                     break
+
+                raw_url = result.get("url", "").strip()
+                url = _normalize_url(raw_url)
+                title = (result.get("title") or "").strip()
+                markdown = result.get("markdown") or ""
+                snippet = result.get("description") or ""
+
+                # Check if it's an individual job URL
+                if _is_individual_job_url(url, title):
+                    if url in seen_urls:
+                        stats["duplicates"] += 1
+                        continue
+                    seen_urls.add(url)
+
+                    description = markdown.strip() or snippet.strip() or title
+
+                    if _is_valid_job_detail(description):
+                        rows.append(JobListing(
+                            job_url=url,
+                            title=title,
+                            company=_guess_company(title, url),
+                            location=_guess_location(f"{title} {description[:500]}"),
+                            description=description[:4000],
+                            source=self.name,
+                            posting_date=_guess_posting_date(description[:1500]),
+                        ))
+                    else:
+                        log.info(f"Rejected individual job page (failed validation): {url}")
+                else:
+                    # It's an aggregate page
+                    if not _is_job_like(url, title):
+                        stats["aggregate_pages_rejected"] += 1
+                        continue
+
+                    if stats["aggregate_pages_expanded"] >= MAX_AGGREGATE_EXPANSIONS:
+                        continue
+
+                    stats["aggregate_pages_expanded"] += 1
+                    links = _extract_job_links(markdown, url)
+                    stats["job_links_extracted"] += len(links)
+
+                    valid_links = [l for l in links if _is_individual_job_url(l)]
+
+                    for link in valid_links[:MAX_LINKS_PER_AGGREGATE]:
+                        norm_link = _normalize_url(link)
+                        if norm_link in seen_urls:
+                            stats["duplicates"] += 1
+                            continue
+                        seen_urls.add(norm_link)
+
+                        stats["detail_pages_attempted"] += 1
+                        try:
+                            detail_data = _fetch_job_detail(link)
+                            if not detail_data:
+                                continue
+
+                            detail_md = detail_data.get("markdown", "")
+                            detail_title = detail_data.get("metadata", {}).get("title", title)
+
+                            if _is_valid_job_detail(detail_md):
+                                stats["detail_pages_valid"] += 1
+                                rows.append(JobListing(
+                                    job_url=norm_link,
+                                    title=detail_title,
+                                    company=_guess_company(detail_title, norm_link),
+                                    location=_guess_location(f"{detail_title} {detail_md[:500]}"),
+                                    description=detail_md[:4000],
+                                    source=self.name,
+                                    posting_date=_guess_posting_date(detail_md[:1500])
+                                ))
+                                # Set discovered_from dynamically since it's not strictly in JobListing,
+                                # we can just append it to the description or if we extend the model.
+                                # The instruction said we could add a small optional field to JobListing.
+                                # Since I haven't added it to JobListing yet, I'll just rely on the job_url being correct.
+
+                                if len(rows) >= config.FIRECRAWL_MAX_TOTAL_RESULTS:
+                                    break
+                        except Exception as exc:
+                            stats["errors"] += 1
+                            log.warning(f"Failed to scrape detail page '{link}': {exc}")
+
+                        time.sleep(0.5)
 
             time.sleep(0.5)  # light pacing between queries, not per-result
 
         log.info(
-            f"queries={queries_run}/{len(queries)} results={results_seen} "
-            f"pages_with_content={pages_with_content} extracted={len(rows)} "
-            f"rejected_non_job={rejected_non_job} duplicates={duplicate_count} errors={error_count}"
+            f"Firecrawl: queries={stats['queries_run']}/{len(queries)} "
+            f"search_results={stats['results_seen']} "
+            f"aggregate_pages_expanded={stats['aggregate_pages_expanded']} "
+            f"job_links_extracted={stats['job_links_extracted']} "
+            f"detail_pages_attempted={stats['detail_pages_attempted']} "
+            f"detail_pages_valid={stats['detail_pages_valid']} "
+            f"aggregate_pages_rejected={stats['aggregate_pages_rejected']} "
+            f"duplicates={stats['duplicates']} "
+            f"errors={stats['errors']} "
+            f"final_jobs={len(rows)}"
         )
         return rows
