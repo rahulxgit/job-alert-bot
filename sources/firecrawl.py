@@ -268,7 +268,7 @@ def _extract_job_links(markdown: str, base_url: str) -> list[str]:
 def _fetch_job_detail(url: str) -> dict:
     """Use Firecrawl scrape endpoint to fetch detail."""
     resp = requests.post(
-        "https://api.firecrawl.dev/v1/scrape",
+        "https://api.firecrawl.dev/v2/scrape",
         headers={"Authorization": f"Bearer {config.FIRECRAWL_API_KEY}", "Content-Type": "application/json"},
         json={"url": url, "formats": ["markdown"], "onlyMainContent": True},
         timeout=15,

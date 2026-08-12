@@ -276,7 +276,7 @@ def test_aggregate_expansion_creates_individual_listings(mock_post):
                     ]
                 }
             })
-        elif "v1/scrape" in url:
+        elif "v2/scrape" in url:
             json_body = kwargs.get("json", {})
             req_url = json_body.get("url", "")
             if "react-123" in req_url:
@@ -380,7 +380,7 @@ def test_aggregate_expansion_creates_individual_listings(mock_post):
                     ]
                 }
             })
-        elif "v1/scrape" in url:
+        elif "v2/scrape" in url:
             json_body = kwargs.get("json", {})
             req_url = json_body.get("url", "")
             if "react-123" in req_url:
