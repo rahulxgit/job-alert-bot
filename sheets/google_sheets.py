@@ -34,7 +34,10 @@ def log_new_jobs(sheet, listings: list[JobListing]):
     rows = [
         [
             listing.job_url, listing.title, listing.company, listing.location,
-            int(listing.fit_score), listing.reason,
+            int(listing.fit_score), listing.fit_tier, listing.reason,
+            "; ".join(listing.gaps) if listing.gaps else "",
+            listing.role_match, listing.experience_match, listing.technical_match,
+            listing.project_match, listing.education_match, listing.location_match,
             datetime.now().strftime("%Y-%m-%d %H:%M"),
             listing.recruiter_email, listing.source or "Unknown",
         ]

@@ -1,3 +1,4 @@
+import argparse
 """
 Daily job alert bot — entry point.
 
@@ -64,13 +65,31 @@ def fetch_all() -> tuple:
     return all_listings, source_counts
 
 
+
+def _normalize_url(url: str) -> str:
+    """Strips common tracking params so the same job found via two
+    different query strings still dedupes cleanly."""
+    if not url or "?" not in url:
+        return url
+    base, _, query = url.partition("?")
+    TRACKING_PARAM_PREFIXES = ("utm_", "ref", "src", "trk", "gclid", "fbclid")
+    kept = [
+        pair for pair in query.split("&")
+        if pair and not pair.split("=")[0].lower().startswith(TRACKING_PARAM_PREFIXES)
+    ]
+    return f"{base}?{'&'.join(kept)}" if kept else base
+
 def dedupe(listings: list[JobListing]) -> list[JobListing]:
     seen, unique = set(), []
     for listing in listings:
-        if listing.job_url and listing.job_url not in seen:
-            seen.add(listing.job_url)
+        norm_url = _normalize_url(listing.job_url)
+        if norm_url and norm_url not in seen:
+            seen.add(norm_url)
+            # Retain normalized url in the listing to avoid downstream duplication
+            listing.job_url = norm_url
             unique.append(listing)
     return unique
+
 
 
 def _source_breakdown(listings: list[JobListing]) -> dict:
@@ -80,7 +99,7 @@ def _source_breakdown(listings: list[JobListing]) -> dict:
     return counts
 
 
-def run_pipeline():
+def run_pipeline(dry_run: bool = False):
     log.info("Fetching from all sources...")
     all_listings, source_counts = fetch_all()
     all_listings = dedupe(all_listings)
@@ -94,7 +113,7 @@ def run_pipeline():
     if not shortlist:
         log.info("Nothing to review — no matches today.")
         gmail = get_gmail_service()
-        send_email(gmail, build_email_body([], source_counts), 0)
+        if not dry_run: send_email(gmail, build_email_body([], source_counts), 0)
         return
 
     sheet = get_sheet()
@@ -105,7 +124,7 @@ def run_pipeline():
     if not unseen:
         log.info("Everything in the shortlist was already logged — nothing new to review.")
         gmail = get_gmail_service()
-        send_email(gmail, build_email_body([], source_counts), 0)
+        if not dry_run: send_email(gmail, build_email_body([], source_counts), 0)
         return
 
     reviewed = review_candidates(unseen)
@@ -136,14 +155,19 @@ def run_pipeline():
     # already passed review.
     reviewed.sort(key=lambda l: (bool(l.recruiter_email), l.fit_score), reverse=True)
 
-    log_new_jobs(sheet, reviewed)
+    if not dry_run: log_new_jobs(sheet, reviewed)
 
     gmail = get_gmail_service()
     body = build_email_body(reviewed, source_counts)
-    send_email(gmail, body, len(reviewed))
+    if not dry_run: send_email(gmail, body, len(reviewed))
     log.info("Email sent.")
 
 
 if __name__ == "__main__":
-    config.validate()
-    run_pipeline()
+    parser = argparse.ArgumentParser(description="Daily job alert bot")
+    parser.add_argument("--dry-run", action="store_true", help="Run without sending emails or updating google sheets")
+    args = parser.parse_args()
+
+    if not args.dry_run:
+        config.validate()
+    run_pipeline(dry_run=args.dry_run)

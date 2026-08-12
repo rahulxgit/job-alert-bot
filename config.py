@@ -137,12 +137,20 @@ FIRECRAWL_MAX_TOTAL_RESULTS = int(os.environ.get("FIRECRAWL_MAX_TOTAL_RESULTS", 
 FIRECRAWL_TIMEOUT = int(os.environ.get("FIRECRAWL_TIMEOUT", "30"))
 
 FIRECRAWL_ROLE_TERMS = [
-    "React Developer", "React.js Developer", "Frontend Developer",
-    "Frontend Engineer", "Full Stack Developer", "Full Stack Engineer",
-    "Software Developer", "Software Engineer", "MERN Developer",
+    "SDE", "SDE-1", "Software Engineer", "Software Developer",
+    "Full Stack Engineer", "Full Stack Developer", "Frontend Engineer",
+    "React Developer", "React.js Developer", "Next.js Developer",
+    "Node.js Developer", "Backend Engineer", "Backend Developer",
+    "AI Engineer", "AI/ML Engineer", "GenAI Engineer", "LLM Engineer",
+    "Applied AI Engineer", "AI Software Engineer", "Product Engineer",
     "Associate Software Engineer", "Graduate Software Engineer",
+    "Junior Software Engineer", "New Grad Engineer", "Graduate Engineer Trainee",
 ]
-FIRECRAWL_LOCATIONS = ["Bangalore", "Pune", "India"]
+FIRECRAWL_LOCATIONS = [
+    "Bengaluru", "Bangalore", "Pune", "Hyderabad", "Gurugram",
+    "Gurgaon", "Noida", "Delhi NCR", "Mumbai", "Chennai",
+    "Kolkata", "Ahmedabad", "Remote", "India"
+]
 
 # Rotated (not cross-producted) across role x location combos so the query
 # list stays diverse in how it phrases seniority without exploding the
@@ -150,12 +158,29 @@ FIRECRAWL_LOCATIONS = ["Bangalore", "Pune", "India"]
 # different experience phrasing in rotation rather than every combo
 # repeating "fresher" verbatim.
 FIRECRAWL_EXPERIENCE_TERMS = [
-    "fresher", "0-1 years experience", "entry level", "graduate",
+    "fresher", "new grad", "graduate", "0-1 years", "0-2 years",
+    "entry level", "junior", "associate", "early career",
 ]
 
 _role_location_combos = [
     (role, location) for location in FIRECRAWL_LOCATIONS for role in FIRECRAWL_ROLE_TERMS
 ]
+
+FIRECRAWL_TECH_COMBOS = [
+    "React + Node", "React + TypeScript", "Next.js + Node", "MERN",
+    "JavaScript + React", "TypeScript + React", "LLM + Python",
+    "LLM + JavaScript", "AI + React", "AI + Node", "RAG", "MCP",
+    "generative AI", "AI agents"
+]
+
+_tech_location_combos = [
+    (tech, location) for location in FIRECRAWL_LOCATIONS for tech in FIRECRAWL_TECH_COMBOS
+]
+_TECH_LOCATION_QUERIES = [
+    f"{tech} {FIRECRAWL_EXPERIENCE_TERMS[i % len(FIRECRAWL_EXPERIENCE_TERMS)]} {location}"
+    for i, (tech, location) in enumerate(_tech_location_combos)
+]
+
 _ROLE_LOCATION_QUERIES = [
     f"{role} {FIRECRAWL_EXPERIENCE_TERMS[i % len(FIRECRAWL_EXPERIENCE_TERMS)]} {location}"
     for i, (role, location) in enumerate(_role_location_combos)
@@ -173,13 +198,18 @@ _SITE_TARGETED_QUERIES = [
     "software engineer entry level India site:boards.greenhouse.io",
     "frontend developer fresher India site:jobs.lever.co",
     "graduate software engineer India site:indeed.com",
+    "AI engineer fresher India site:wellfound.com",
+    "react developer fresher India site:internshala.com",
+    "software developer entry level India site:glassdoor.co.in",
+    "SDE 1 India site:cutshort.io",
+    "software engineer 0-1 years India site:simplyhired.co.in",
 ]
 
 # Built as one combined list at import time rather than nested loops
 # scattered through the source module — easier to read, easier to trim.
 # Capped by FIRECRAWL_MAX_QUERIES at call time, not here, so this list can
 # stay expressive without needing to hand-count it.
-FIRECRAWL_SEARCH_QUERIES = _ROLE_LOCATION_QUERIES + _SITE_TARGETED_QUERIES
+FIRECRAWL_SEARCH_QUERIES = _ROLE_LOCATION_QUERIES + _TECH_LOCATION_QUERIES + _SITE_TARGETED_QUERIES
 
 # Defaults to running every generated query above (currently 38) rather
 # than an arbitrary smaller number — override via env var to trim the
@@ -250,8 +280,10 @@ PRIORITY_COMPANIES = [
     "razorpay", "sarvam", "groww", "meesho", "zepto", "cred", "swiggy",
     "zomato", "flipkart", "postman", "browserstack", "freshworks",
 ]
-MAX_LLM_CANDIDATES = 60
-LLM_FIT_THRESHOLD = 60
+MAX_LLM_CANDIDATES = 300  # Increased drastically so AI review gets a much wider pool
+LLM_FIT_THRESHOLD = 70  # Only keep good or strong matches
+MIN_LIGHTWEIGHT_SCORE = 3 # threshold for Stage A discovery prefilter
+
 CONSECUTIVE_RATE_LIMIT_BREAKER = 5
 
 # --- AI providers ----------------------------------------------------------
@@ -281,7 +313,7 @@ GMAIL_CLIENT_SECRET = os.environ.get("GMAIL_CLIENT_SECRET", "")
 GMAIL_REFRESH_TOKEN = os.environ.get("GMAIL_REFRESH_TOKEN", "")
 
 # --- Paths -----------------------------------------------------------------
-PROFILE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "profile-data.json")
+PROFILE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "rahul-master-profile.json")
 
 _REQUIRED_FOR_REAL_RUN = [
     "GEMINI_API_KEY", "GOOGLE_SHEET_ID", "GOOGLE_SERVICE_ACCOUNT_JSON",

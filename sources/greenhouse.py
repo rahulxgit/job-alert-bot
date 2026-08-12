@@ -25,6 +25,30 @@ class GreenhouseSource(JobSource):
                 )
                 resp.raise_for_status()
                 data = resp.json()
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 404:
+                    log.warning(f"fetch failed for '{company_name}' (token '{token}'): 404 Not Found")
+                else:
+                    log.warning(f"fetch failed for '{company_name}' (token '{token}'): {e}")
+                continue
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 404:
+                    log.warning(f"fetch failed for '{company_name}' (token '{token}'): 404 Not Found")
+                else:
+                    log.warning(f"fetch failed for '{company_name}' (token '{token}'): {e}")
+                continue
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 404:
+                    log.warning(f"fetch failed for '{company_name}' (token '{token}'): 404 Not Found")
+                else:
+                    log.warning(f"fetch failed for '{company_name}' (token '{token}'): {e}")
+                continue
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 404:
+                    log.warning(f"fetch failed for '{company_name}' (token '{token}'): 404 Not Found")
+                else:
+                    log.warning(f"fetch failed for '{company_name}' (token '{token}'): {e}")
+                continue
             except Exception as exc:
                 log.warning(f"fetch failed for '{company_name}' (token '{token}'): {exc}")
                 continue

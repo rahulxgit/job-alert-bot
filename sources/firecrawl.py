@@ -88,8 +88,39 @@ def _normalize_url(url: str) -> str:
     return f"{base}?{'&'.join(kept)}" if kept else base
 
 
-def _is_job_like(url: str) -> bool:
-    return bool(url) and not any(d in url.lower() for d in NON_JOB_DOMAINS)
+def _is_job_like(url: str, title: str = "") -> bool:
+    url_lower = url.lower()
+    title_lower = title.lower() if title else ""
+
+    # Exclude non-job domains
+    if not url or any(d in url_lower for d in NON_JOB_DOMAINS):
+        return False
+
+    # Reject obvious category/landing/search pages
+    bad_url_patterns = [
+        "search", "category", "tag", "blog", "article", "collection", "author",
+        "find-jobs", "browse"
+    ]
+    bad_title_patterns = [
+        "search results", "all jobs", "careers at", "jobs at", "open positions",
+        "job openings", "working at"
+    ]
+
+    # If the URL is just the homepage or a generic /jobs/ page
+    # It usually doesn't have a deep path
+    path = url.split("://")[-1].split("/")
+    if len(path) <= 2 and "jobs" in url_lower:
+        return False
+
+    for p in bad_url_patterns:
+        if f"/{p}/" in url_lower or f"/{p}?" in url_lower or url_lower.endswith(f"/{p}"):
+            return False
+
+    for p in bad_title_patterns:
+        if p in title_lower:
+            return False
+
+    return True
 
 
 def _guess_company(title: str, url: str) -> str:
@@ -220,7 +251,7 @@ class FirecrawlSource(JobSource):
 
             for result in sorted(results, key=lambda r: _priority_tier(r.get("url", ""))):
                 url = _normalize_url((result.get("url") or "").strip())
-                if not _is_job_like(url):
+                if not _is_job_like(url, result.get("title", "")):
                     rejected_non_job += 1
                     continue
                 if url in seen_urls:

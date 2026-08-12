@@ -16,14 +16,27 @@ def build_email_body(listings: list[JobListing], source_counts: dict = None) -> 
     contact_count = sum(1 for l in listings if l.recruiter_email)
     lines.append(f"{len(listings)} new job(s) matched today (Gemini-reviewed) — {contact_count} have a contact for outreach, listed first:\n")
 
-    for listing in listings:
-        marker = "📧 " if listing.recruiter_email else ""
-        email_line = f"  Contact: {listing.recruiter_email}\n" if listing.recruiter_email else ""
-        lines.append(
-            f"- {marker}{listing.title} @ {listing.company} ({listing.location}) "
-            f"— fit {listing.fit_score}/100 [{listing.source}]\n"
-            f"  Why: {listing.reason}\n"
-            f"{email_line}"
-            f"  {listing.job_url}\n"
-        )
+    # Group by tiers
+    exceptional = [l for l in listings if l.fit_tier == "Exceptional"]
+    strong = [l for l in listings if l.fit_tier == "Strong"]
+    good = [l for l in listings if l.fit_tier in ["Good", "Reasonable", "Weak", ""]]
+
+    tiers = [("Exceptional Matches (90+)", exceptional), ("Strong Matches (80-89)", strong), ("Good/Other Matches (<80)", good)]
+
+    for tier_name, tier_listings in tiers:
+        if not tier_listings:
+            continue
+        lines.append(f"\n--- {tier_name} ---\n")
+        for listing in tier_listings:
+            marker = "📧 " if listing.recruiter_email else ""
+            email_line = f"  Contact: {listing.recruiter_email}\n" if listing.recruiter_email else ""
+            gaps_line = f"  Gaps: {'; '.join(listing.gaps)}\n" if listing.gaps else ""
+            lines.append(
+                f"- {marker}{listing.title} @ {listing.company} ({listing.location}) "
+                f"— fit {listing.fit_score}/100 [{listing.source}]\n"
+                f"  Why: {listing.reason}\n"
+                f"{gaps_line}"
+                f"{email_line}"
+                f"  {listing.job_url}\n"
+            )
     return "\n".join(lines)

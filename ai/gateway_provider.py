@@ -41,7 +41,17 @@ class GatewayProvider(AIProvider):
                 return FitVerdict(
                     fit_score=parsed.get("fit_score", 0),
                     is_fresher_appropriate=parsed.get("is_fresher_appropriate", False),
-                    reason=parsed.get("reason", ""),
+                    reason=parsed.get("reason", "") or "; ".join(parsed.get("why", [])),
+                    role_match=parsed.get("role_match", 0),
+                    experience_match=parsed.get("experience_match", 0),
+                    technical_match=parsed.get("technical_match", 0),
+                    project_match=parsed.get("project_match", 0),
+                    education_match=parsed.get("education_match", 0),
+                    location_match=parsed.get("location_match", 0),
+                    company_quality=parsed.get("company_quality", 0),
+                    decision=parsed.get("decision", ""),
+                    why=parsed.get("why", []),
+                    gaps=parsed.get("gaps", []),
                 )
             except Exception as exc:
                 if attempt < max_retries:

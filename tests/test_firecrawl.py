@@ -171,7 +171,7 @@ def test_query_list_covers_all_role_location_combos_with_diverse_phrasing():
     (not a trimmed subset) and rotate experience-level phrasing across
     them, plus the site-targeted queries — and FIRECRAWL_MAX_QUERIES
     should default to running all of them."""
-    expected_combo_count = len(config.FIRECRAWL_ROLE_TERMS) * len(config.FIRECRAWL_LOCATIONS)
+    expected_combo_count = len(config.FIRECRAWL_ROLE_TERMS) * len(config.FIRECRAWL_LOCATIONS) + len(config.FIRECRAWL_TECH_COMBOS) * len(config.FIRECRAWL_LOCATIONS)
     role_location_queries = [
         q for q in config.FIRECRAWL_SEARCH_QUERIES if "site:" not in q
     ]
