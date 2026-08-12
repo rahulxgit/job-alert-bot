@@ -1,3 +1,4 @@
+import re
 """
 Orchestrates the full matching pipeline: cheap keyword pre-filter -> AI
 gateway review (primary) -> Gemini fallback (with adaptive quota
@@ -38,7 +39,17 @@ Title: {listing.title}
 Company: {listing.company}
 Description: {listing.description[:3000]}
 
-Evaluate if this job is a strong match for this specific candidate (a fresher/final-year student).
+Candidate experience eligibility:
+- Rahul is a 2026 graduate / entry-level candidate.
+- Freshers and new graduates are eligible.
+- 0 years, 0-1 years, 0-2 years and up to 1 year required experience are eligible.
+- Mandatory required experience above 1 year is not eligible.
+- 2+ years required must be rejected.
+- 3+ years required must be rejected.
+- Senior/Lead/Staff/Principal/Manager roles must be rejected.
+- Preferred experience above 1 year is not automatically a rejection if fresh graduates are explicitly accepted.
+
+Evaluate if this job is a strong match for this specific candidate.
 Consider role alignment, experience required, tech alignment, project relevance, education eligibility, and location.
 
 Respond with ONLY a JSON object, no other text, in this exact shape:
@@ -57,14 +68,10 @@ Respond with ONLY a JSON object, no other text, in this exact shape:
   "gaps": ["<gap 1>", "<gap 2>"]
 }}"""
 
-
-
-import re
-
 def _parse_experience(text: str) -> dict:
     """
     Detects experience requirements.
-    Returns dict with min_years, max_years, required, preferred, graduate_friendly.
+    Returns dict with min_years, max_years, required, preferred, graduate_friendly, eligible_for_rahul, reason.
     """
     text_lower = text.lower()
 
@@ -73,22 +80,38 @@ def _parse_experience(text: str) -> dict:
         "max_years": 0,
         "required": False,
         "preferred": False,
-        "graduate_friendly": False
+        "graduate_friendly": False,
+        "eligible_for_rahul": True,
+        "reason": ""
     }
 
     # Check graduate signals
-    if any(sig in text_lower for sig in ["new grad", "fresher", "0-1 years", "0-2 years", "final-year", "2026 graduate", "graduate", "entry level"]):
+    graduate_signals = ["new grad", "fresher", "0-1 years", "0-1 yrs", "0-1 yr", "0 to 1", "0-2 years", "0-2 yrs", "0-2 yr", "0 to 2", "0 - 2", "0 – 2", "0–1", "0–2", "up to 1 year", "1 year experience", "1+ years", "final-year", "2026 graduate", "graduate", "entry level", "entry-level"]
+    if any(sig in text_lower for sig in graduate_signals):
         res["graduate_friendly"] = True
 
-    # Check strict requirements
-    # 3+ years required
-    if re.search(r"\b([3-9]|1[0-9])\+?\s*(?:\+|to|-|\s)*\s*(?:years?|yrs?)\b", text_lower):
-        if re.search(r"\b([3-9]|1[0-9])\+?\s*(?:\+|to|-|\s)*\s*(?:years?|yrs?)\s*(?:preferred|a plus|nice to have)\b", text_lower):
+    # Check strict requirements > 1 year
+    req_match = re.search(r"\b([2-9]|1[0-9])\+?\s*(?:\+|to|-|–|\s)*\s*(?:years?|yrs?)\s*(?:of\s*experience)?\b", text_lower)
+    if req_match:
+        years = int(req_match.group(1))
+        # Check if it's preferred
+        if re.search(r"\b([2-9]|1[0-9])\+?\s*(?:\+|to|-|–|\s)*\s*(?:years?|yrs?).{0,20}(?:preferred|a plus|nice to have|advantage|bonus)\b", text_lower):
             res["preferred"] = True
-            res["min_years"] = 3
-        else:
+            res["min_years"] = years
+        elif "required" in text_lower or "minimum" in text_lower or "must have" in text_lower or re.search(r"\b([2-9]|1[0-9])\+?\s*(?:\+|to|-|–|\s)*\s*(?:years?|yrs?)\b", text_lower):
             res["required"] = True
-            res["min_years"] = 3
+            res["min_years"] = years
+
+            # If mandatory > 1 year AND not graduate friendly -> Reject
+            if years > 1 and not res["graduate_friendly"]:
+                res["eligible_for_rahul"] = False
+                res["reason"] = f"Mandatory experience ({years}+ years) exceeds 1 year and no fresher signal found."
+
+    # Also hard reject explicit senior titles unless it's a false positive
+    seniority_hits = sum(term in text_lower for term in config.SENIORITY_EXCLUSIONS)
+    if seniority_hits >= 2 and not res["graduate_friendly"]:
+        res["eligible_for_rahul"] = False
+        res["reason"] = "Role appears too senior based on title/description keywords."
 
     return res
 
@@ -101,7 +124,7 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     seniority_hits += sum(term in description for term in config.SENIORITY_EXCLUSIONS)
 
     exp_info = _parse_experience(description)
-    if seniority_hits >= 2 or (exp_info["required"] and not exp_info["graduate_friendly"]):
+    if seniority_hits >= 2 or not exp_info["eligible_for_rahul"]:
         return 0
 
     score = sum(sig in full_text for sig in config.FRESHER_SIGNALS) * 4
@@ -114,7 +137,6 @@ def keyword_prefilter_score(listing: JobListing) -> int:
         score += 4
     score -= seniority_hits
     return max(score, 0)
-
 
 
 def prefilter(listings: list[JobListing]) -> list[JobListing]:
@@ -207,6 +229,15 @@ def review_candidates(listings: list[JobListing]) -> list[JobListing]:
             gemini_confirmed_exhausted = True
             log.info("Gemini (fallback) quota confirmed exhausted for this run — skipping its retry waits for the rest of the run")
 
+        # Deterministic Eligibility Check
+        exp_info = _parse_experience(listing.description)
+        if not exp_info["eligible_for_rahul"]:
+            listing.fit_score = 0
+            listing.fresher_appropriate = False
+            listing.reason = exp_info["reason"]
+            listing.fit_tier = "Reject"
+            continue
+
         listing.role_match = max(0, min(getattr(verdict, 'role_match', 0), 25))
         listing.experience_match = max(0, min(getattr(verdict, 'experience_match', 0), 20))
         listing.technical_match = max(0, min(getattr(verdict, 'technical_match', 0), 25))
@@ -227,10 +258,16 @@ def review_candidates(listings: list[JobListing]) -> list[JobListing]:
         )
 
         listing.fit_score = calculated_fit_score
-        listing.fresher_appropriate = verdict.is_fresher_appropriate
-        listing.reason = verdict.reason
+        listing.fresher_appropriate = getattr(verdict, 'is_fresher_appropriate', False)
+        listing.reason = getattr(verdict, 'reason', "")
 
-        # Tier logic
+        # Combine 'why' array into reason if it's a list, same with gaps
+        if hasattr(verdict, 'why') and isinstance(verdict.why, list):
+            listing.reason = "; ".join(verdict.why)
+        if hasattr(verdict, 'gaps') and isinstance(verdict.gaps, list):
+            listing.gaps = verdict.gaps
+
+        # Tier logic based on deterministic score
         if listing.fit_score >= 90:
             listing.fit_tier = "Exceptional"
         elif listing.fit_score >= 80:
@@ -242,13 +279,7 @@ def review_candidates(listings: list[JobListing]) -> list[JobListing]:
         else:
             listing.fit_tier = "Weak"
 
-        # Combine 'why' array into reason if it's a list, same with gaps
-        if hasattr(verdict, 'why') and isinstance(verdict.why, list):
-            listing.reason = "; ".join(verdict.why)
-        if hasattr(verdict, 'gaps') and isinstance(verdict.gaps, list):
-            listing.gaps = verdict.gaps
-
-        if verdict.reason == "all LLM providers failed — not evaluated":
+        if getattr(verdict, 'reason', "") == "all LLM providers failed — not evaluated":
             consecutive_failures += 1
         else:
             consecutive_failures = 0
@@ -258,14 +289,9 @@ def review_candidates(listings: list[JobListing]) -> list[JobListing]:
                         f"stopping here rather than burning the run's time budget. Remaining candidates picked up next run.")
             break
 
-        if verdict.fit_score >= config.LLM_FIT_THRESHOLD and verdict.is_fresher_appropriate:
+        if listing.fit_score >= config.LLM_FIT_THRESHOLD and listing.fresher_appropriate and exp_info["eligible_for_rahul"]:
             passed.append(listing)
 
-        # No blanket pacing needed here anymore — that 4.5s delay was
-        # specifically calibrated for Gemini's free-tier RPM limit back
-        # when it was called for every single candidate. Now the gateway
-        # (not rate-limited the same way) is primary, so Gemini is only
-        # called occasionally as fallback — pace only those calls.
         if gemini_hit_rate_limit and not gemini_confirmed_exhausted:
             time.sleep(4.5)
 
