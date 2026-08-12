@@ -50,6 +50,30 @@ class NaukriSource(JobSource):
                 resp = requests.get("https://www.naukri.com/jobapi/v3/search", headers=headers, params=params, timeout=15)
                 resp.raise_for_status()
                 data = resp.json()
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 406:
+                    log.warning(f"fetch failed for '{term}' (406 Not Acceptable). Firecrawl will be used as a fallback.")
+                else:
+                    log.warning(f"fetch failed for '{term}': {e}")
+                continue
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 406:
+                    log.warning(f"fetch failed for '{term}' (406 Not Acceptable). Firecrawl will be used as a fallback.")
+                else:
+                    log.warning(f"fetch failed for '{term}': {e}")
+                continue
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 406:
+                    log.warning(f"fetch failed for '{term}' (406 Not Acceptable). Firecrawl will be used as a fallback.")
+                else:
+                    log.warning(f"fetch failed for '{term}': {e}")
+                continue
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 406:
+                    log.warning(f"fetch failed for '{term}' (406 Not Acceptable). Firecrawl will be used as a fallback.")
+                else:
+                    log.warning(f"fetch failed for '{term}': {e}")
+                continue
             except Exception as exc:
                 log.warning(f"fetch failed for '{term}': {exc}")
                 continue

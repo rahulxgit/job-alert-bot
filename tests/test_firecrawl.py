@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
-from sources.firecrawl import FirecrawlSource, _normalize_url, _is_job_like
+from sources.firecrawl import FirecrawlSource, _normalize_url, _is_aggregate_page
 
 
 def _mock_response(json_data, status_ok=True):
@@ -52,6 +52,10 @@ def test_normalizes_into_job_listings(mock_post):
             "web": [
                 {
                     "url": "https://boards.greenhouse.io/acme/jobs/123?utm_source=x",
+                    "title": "React Developer at Acme",
+                    "description": "short snippet",
+                    "markdown": "Full job description text about React and Node fresher role.\nRequirements:\n- React\nApply now",
+
                     "title": "React Developer at Acme",
                     "description": "short snippet",
                     "markdown": "Full job description text about React and Node fresher role.",
@@ -110,7 +114,7 @@ def test_duplicate_urls_within_source_are_deduped(mock_post):
     same_result = {
         "url": "https://naukri.com/job/456?ref=abc",
         "title": "Full Stack Developer - Acme",
-        "markdown": "Full stack role description.",
+        "markdown": "Full stack role description.\nRequirements:\n- React\nApply now",
     }
     mock_post.return_value = _mock_response({"success": True, "data": {"web": [same_result]}})
     try:
@@ -123,12 +127,6 @@ def test_duplicate_urls_within_source_are_deduped(mock_post):
 def test_normalize_url_strips_tracking_params():
     assert _normalize_url("https://x.com/job/1?utm_source=fb&id=1") == "https://x.com/job/1?id=1"
     assert _normalize_url("https://x.com/job/1") == "https://x.com/job/1"
-
-
-def test_is_job_like_rejects_social_domains():
-    assert _is_job_like("https://boards.greenhouse.io/acme/jobs/1") is True
-    assert _is_job_like("https://instagram.com/p/xyz") is False
-    assert _is_job_like("") is False
 
 
 @patch("sources.firecrawl.requests.post")
@@ -171,7 +169,7 @@ def test_query_list_covers_all_role_location_combos_with_diverse_phrasing():
     (not a trimmed subset) and rotate experience-level phrasing across
     them, plus the site-targeted queries — and FIRECRAWL_MAX_QUERIES
     should default to running all of them."""
-    expected_combo_count = len(config.FIRECRAWL_ROLE_TERMS) * len(config.FIRECRAWL_LOCATIONS)
+    expected_combo_count = len(config.FIRECRAWL_ROLE_TERMS) * len(config.FIRECRAWL_LOCATIONS) + len(config.FIRECRAWL_TECH_COMBOS) * len(config.FIRECRAWL_LOCATIONS)
     role_location_queries = [
         q for q in config.FIRECRAWL_SEARCH_QUERIES if "site:" not in q
     ]
@@ -225,7 +223,7 @@ def test_extracted_listings_carry_posting_date_when_present(mock_post):
             "web": [{
                 "url": "https://boards.greenhouse.io/acme/jobs/999",
                 "title": "React Developer at Acme",
-                "markdown": "React role, posted 1 day ago. React and Node fresher role.",
+                "markdown": "React role, posted 1 day ago. React and Node fresher role.\nRequirements:\n- React\nApply now",
             }]
         },
     })
@@ -254,3 +252,202 @@ def test_api_key_never_appears_in_logs(mock_post, caplog):
     finally:
         config.FIRECRAWL_API_KEY, config.FIRECRAWL_SEARCH_QUERIES = original_key, original_queries
     assert "fc-super-secret-value" not in caplog.text
+
+def test_aggregate_expansion_creates_individual_listings(mock_post):
+    from sources.firecrawl import FirecrawlSource
+    import config
+    original_key, original_queries = config.FIRECRAWL_API_KEY, config.FIRECRAWL_SEARCH_QUERIES
+    config.FIRECRAWL_API_KEY = "fc-test"
+    config.FIRECRAWL_SEARCH_QUERIES = ["React Developer fresher Bangalore"]
+
+    def side_effect(*args, **kwargs):
+        # Determine if it's a search or a scrape call
+        url = args[0]
+        if "v2/search" in url:
+            return _mock_response({
+                "success": True,
+                "data": {
+                    "web": [
+                        {
+                            "url": "https://example.com/react-developer-jobs",
+                            "title": "React Developer Jobs",
+                            "markdown": "[React Developer](https://example.com/jobs/react-123)\n\n[Node Developer](https://example.com/jobs/node-456)\n\n[React Developer Duplicate](https://example.com/jobs/react-123)\n\n[About](https://example.com/about)"
+                        }
+                    ]
+                }
+            })
+        elif "v2/scrape" in url:
+            json_body = kwargs.get("json", {})
+            req_url = json_body.get("url", "")
+            if "react-123" in req_url:
+                return _mock_response({
+                    "success": True,
+                    "data": {
+                        "metadata": {"title": "React Developer"},
+                        "markdown": "Company: Example Corp\nLocation: Bengaluru\nResponsibilities\nBuild React applications.\nRequirements\nReact\nJavaScript\nTypeScript\n0-1 years experience\nApply now"
+                    }
+                })
+            elif "node-456" in req_url:
+                return _mock_response({
+                    "success": True,
+                    "data": {
+                        "metadata": {"title": "Node Developer"},
+                        "markdown": "Company: Example Corp\nLocation: Pune\nResponsibilities\nBuild Node.js backend services.\nRequirements\nNode.js\nJavaScript\n0-2 years experience\nApply now"
+                    }
+                })
+        return _mock_response({"success": False})
+
+    mock_post.side_effect = side_effect
+
+    try:
+        rows = FirecrawlSource().fetch_listings()
+    finally:
+        config.FIRECRAWL_API_KEY, config.FIRECRAWL_SEARCH_QUERIES = original_key, original_queries
+
+    # Aggregate URL is never returned
+    job_urls = {job.job_url for job in rows}
+    assert "https://example.com/react-developer-jobs" not in job_urls
+
+    # Two actual JobListings are returned
+    assert len(rows) == 2
+
+    # Job URLs are the actual individual URLs
+    assert job_urls == {
+        "https://example.com/jobs/react-123",
+        "https://example.com/jobs/node-456",
+    }
+
+    # Detail-page content is used
+    react_job = next(j for j in rows if "react-123" in j.job_url)
+    node_job = next(j for j in rows if "node-456" in j.job_url)
+
+    assert "React" in react_job.description
+    assert "0-1 years" in react_job.description
+    assert "Node.js" in node_job.description
+    assert "0-2 years" in node_job.description
+
+    # Duplicate links are processed only once (2 jobs total instead of 3 extracted links)
+    assert len([job for job in rows if job.job_url.endswith("/jobs/react-123")]) == 1
+
+    # Ensure /about link was not scraped/returned
+    assert "https://example.com/about" not in job_urls
+
+def test_is_aggregate_page_rejects_social_domains():
+    from sources.firecrawl import _is_aggregate_page
+    assert _is_aggregate_page("https://boards.greenhouse.io/acme/jobs/1") is False
+    assert _is_aggregate_page("https://instagram.com/p/xyz") is False
+    assert _is_aggregate_page("") is False
+
+def test_is_aggregate_page_identifies_aggregates():
+    from sources.firecrawl import _is_aggregate_page
+
+    # These ARE aggregate pages
+    assert _is_aggregate_page("https://www.naukri.com/graduate-software-engineer-jobs") == True
+    assert _is_aggregate_page("https://www.naukri.com/graduate-software-engineer-jobs-in-bengaluru-bangalore") == True
+    assert _is_aggregate_page("https://www.naukri.com/mern-stack-jobs-in-pune-2") == True
+    assert _is_aggregate_page("https://in.indeed.com/q-full-stack-developer-fresher-l-bengaluru,-karnataka-jobs.html") == True
+    assert _is_aggregate_page("https://www.glassdoor.co.in/Job/bengaluru-entry-level-software-engineer-jobs-...") == True
+    assert _is_aggregate_page("https://www.simplyhired.co.in/search?q=react+js+developer&l=pune") == True
+
+    # These ARE NOT aggregate pages
+    assert _is_aggregate_page("https://www.linkedin.com/jobs/view/4451665094") == False
+    assert _is_aggregate_page("https://internshala.com/job/detail/fresher-reactjs-developer-job-in-bangalore-at-appscrip1774398609") == False
+    assert _is_aggregate_page("https://cutshort.io/job/React-JS-Developer-Fresher-...") == False
+
+
+
+@patch("sources.firecrawl.requests.post")
+def test_aggregate_expansion_creates_individual_listings(mock_post):
+    from sources.firecrawl import FirecrawlSource
+    import config
+    original_key, original_queries = config.FIRECRAWL_API_KEY, config.FIRECRAWL_SEARCH_QUERIES
+    config.FIRECRAWL_API_KEY = "fc-test"
+    config.FIRECRAWL_SEARCH_QUERIES = ["React Developer fresher Bangalore"]
+
+    def side_effect(*args, **kwargs):
+        # Determine if it's a search or a scrape call
+        url = args[0]
+        if "v2/search" in url:
+            return _mock_response({
+                "success": True,
+                "data": {
+                    "web": [
+                        {
+                            "url": "https://example.com/react-developer-jobs",
+                            "title": "React Developer Jobs",
+                            "markdown": "[React Developer](https://example.com/jobs/react-123)\n\n[Node Developer](https://example.com/jobs/node-456)\n\n[React Developer Duplicate](https://example.com/jobs/react-123)\n\n[About](https://example.com/about)"
+                        }
+                    ]
+                }
+            })
+        elif "v2/scrape" in url:
+            json_body = kwargs.get("json", {})
+            req_url = json_body.get("url", "")
+            if "react-123" in req_url:
+                return _mock_response({
+                    "success": True,
+                    "data": {
+                        "metadata": {"title": "React Developer"},
+                        "markdown": "Company: Example Corp\nLocation: Bengaluru\nResponsibilities\nBuild React applications.\nRequirements\nReact\nJavaScript\nTypeScript\n0-1 years experience\nApply now"
+                    }
+                })
+            elif "node-456" in req_url:
+                return _mock_response({
+                    "success": True,
+                    "data": {
+                        "metadata": {"title": "Node Developer"},
+                        "markdown": "Company: Example Corp\nLocation: Pune\nResponsibilities\nBuild Node.js backend services.\nRequirements\nNode.js\nJavaScript\n0-2 years experience\nApply now"
+                    }
+                })
+        return _mock_response({"success": False})
+
+    mock_post.side_effect = side_effect
+
+    try:
+        rows = FirecrawlSource().fetch_listings()
+    finally:
+        config.FIRECRAWL_API_KEY, config.FIRECRAWL_SEARCH_QUERIES = original_key, original_queries
+
+    # Aggregate URL is never returned
+    job_urls = {job.job_url for job in rows}
+    assert "https://example.com/react-developer-jobs" not in job_urls
+
+    # Two actual JobListings are returned
+    assert len(rows) == 2
+
+    # Job URLs are the actual individual URLs
+    assert job_urls == {
+        "https://example.com/jobs/react-123",
+        "https://example.com/jobs/node-456",
+    }
+
+    # Detail-page content is used
+    react_job = next(j for j in rows if "react-123" in j.job_url)
+    node_job = next(j for j in rows if "node-456" in j.job_url)
+
+    assert "React" in react_job.description
+    assert "0-1 years" in react_job.description
+    assert "Node.js" in node_job.description
+    assert "0-2 years" in node_job.description
+
+    # Duplicate links are processed only once (2 jobs total instead of 3 extracted links)
+    assert len([job for job in rows if job.job_url.endswith("/jobs/react-123")]) == 1
+
+    # Ensure /about link was not scraped/returned
+    assert "https://example.com/about" not in job_urls
+
+def test_is_aggregate_page_identifies_aggregates():
+    from sources.firecrawl import _is_aggregate_page
+
+    # These ARE aggregate pages
+    assert _is_aggregate_page("https://www.naukri.com/graduate-software-engineer-jobs") == True
+    assert _is_aggregate_page("https://www.naukri.com/graduate-software-engineer-jobs-in-bengaluru-bangalore") == True
+    assert _is_aggregate_page("https://www.naukri.com/mern-stack-jobs-in-pune-2") == True
+    assert _is_aggregate_page("https://in.indeed.com/q-full-stack-developer-fresher-l-bengaluru,-karnataka-jobs.html") == True
+    assert _is_aggregate_page("https://www.glassdoor.co.in/Job/bengaluru-entry-level-software-engineer-jobs-...") == True
+    assert _is_aggregate_page("https://www.simplyhired.co.in/search?q=react+js+developer&l=pune") == True
+
+    # These ARE NOT aggregate pages
+    assert _is_aggregate_page("https://www.linkedin.com/jobs/view/4451665094") == False
+    assert _is_aggregate_page("https://internshala.com/job/detail/fresher-reactjs-developer-job-in-bangalore-at-appscrip1774398609") == False
+    assert _is_aggregate_page("https://cutshort.io/job/React-JS-Developer-Fresher-...") == False

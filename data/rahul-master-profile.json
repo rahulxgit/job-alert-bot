@@ -1,0 +1,1405 @@
+{
+  "_meta": {
+    "purpose": [
+      "single source of truth for resume",
+      "ATS resume",
+      "portfolio website",
+      "LinkedIn About/Profile content",
+      "GitHub profile information",
+      "job application profiles",
+      "job-search automation",
+      "recruiter outreach",
+      "career and technical profile",
+      "project descriptions",
+      "job matching",
+      "cover-letter generation",
+      "interview preparation",
+      "personal AI agents",
+      "browser automation",
+      "career dashboards",
+      "future portfolio regeneration"
+    ],
+    "schema_version": "2.0.0",
+    "profile_type": "career_master_profile",
+    "single_source_of_truth": true,
+    "owner": "Rahul Kumar",
+    "last_updated": "2026-08-12",
+    "data_policy": {
+      "preserve_all_source_data": true,
+      "preserve_historical_values": true,
+      "preserve_conflicts": true,
+      "preserve_uncertainty": true,
+      "do_not_fabricate": true,
+      "do_not_silently_overwrite": true,
+      "canonical_data_first": true,
+      "presentation_content_separate_from_facts": true
+    },
+    "source_priority": [
+      "explicit latest information provided by user",
+      "explicit corrections provided by user",
+      "latest master/profile JSON supplied by user",
+      "latest resume/profile information",
+      "latest portfolio information",
+      "existing historical information"
+    ],
+    "generated_from": [
+      "Pasted text (2)(20260812-050712).txt",
+      "Pasted text (3)(20260812-050719).txt",
+      "Pasted markdown(5).md (master JSON reconstruction specification)"
+    ],
+    "source_file_ids": [
+      "file_00000000759081f8b20b157f8d4a1fb7",
+      "file_000000008b508230b7c1951c2404ddaf",
+      "file_000000008f88820ba8f5553d5a781042"
+    ],
+    "source_sha256": {
+      "Pasted text (2)(20260812-050712).txt": "e0989d703d256fe74dc1a464cb29bfd19b60769f9c2179ec9e67cb518954c781",
+      "Pasted text (3)(20260812-050719).txt": "882e93342971bb8e7b2bf251df0849a78dfc5a9a3d4f7ab7e208f1956213371e"
+    },
+    "validation": {
+      "status": "validated",
+      "syntax_valid": true,
+      "duplicate_json_keys_checked": true,
+      "source_data_preservation_checked": true,
+      "conflicts_preserved": true,
+      "fabrication_check": "No new factual claims introduced; structural metadata and derived references are explicitly marked.",
+      "source_1_keys_preserved": true,
+      "source_2_top_level_data_preserved": true
+    },
+    "notes": "Update canonical data in this file first, then regenerate downstream resume, portfolio, LinkedIn, GitHub, and job-automation outputs.",
+    "previous_schema_version": "1.0.0"
+  },
+  "identity": {
+    "full_name": "Rahul Kumar",
+    "preferred_name": "Rahul",
+    "headline": "Full-Stack & AI Engineer",
+    "professional_identity": [
+      "Full-Stack Engineer",
+      "AI Engineer",
+      "Software Engineer"
+    ],
+    "engineering_identity": [
+      "MERN Stack Developer",
+      "AI/LLM Infrastructure Engineer",
+      "MCP Server Developer",
+      "Frontend Engineer"
+    ],
+    "career_stage": "entry-level",
+    "student_status": "final-year undergraduate",
+    "graduation_year": 2026,
+    "graduation_month": "June",
+    "nationality": "Indian",
+    "source": [
+      "user-provided data"
+    ],
+    "confidence": "high",
+    "demographics": {
+      "nationality": "Indian",
+      "veteran_status": "No",
+      "disability_status": "No",
+      "sponsorship_required_us": "No",
+      "sponsorship_required_eu": "No"
+    }
+  },
+  "contact": {
+    "name": "Rahul Kumar",
+    "email": "rahulkumarshc00@gmail.com",
+    "phone": "+91 7762068086",
+    "profiles": {
+      "github": {
+        "username": "rahulxgit",
+        "url": "https://github.com/rahulxgit",
+        "profile_headline": "Software Engineer | Backend-Focused Full-Stack Developer",
+        "total_public_repos": 31,
+        "followers": 0,
+        "following": 0,
+        "pinned_repos": [
+          "logic-looper",
+          "ai-gateway",
+          "job-alert-bot",
+          "rahul-portfolio",
+          "ai-inference-playground",
+          "driveclone"
+        ],
+        "starred_repos": [
+          "nanobrowser/nanobrowser"
+        ],
+        "organizations": [],
+        "notes": "User also referenced https://github.com/rahulxgitt (extra 't') which returns 404. Correct username is rahulxgit."
+      },
+      "linkedin": {
+        "username": "rahulxnit",
+        "url": "https://www.linkedin.com/in/rahulxnit/"
+      },
+      "portfolio": {
+        "url": "https://rahul-portfolio-eight-eta.vercel.app/",
+        "repository": "https://github.com/rahulxgit/rahul-portfolio"
+      },
+      "leetcode": {
+        "username": "S4gKOmKmsm",
+        "url": "https://leetcode.com/u/S4gKOmKmsm/"
+      },
+      "codechef": {
+        "username": "rahulxcodechef",
+        "url": "https://www.codechef.com/users/rahulxcodechef"
+      },
+      "codeforces": {
+        "username": "rahulxcodeforces",
+        "url": "https://codeforces.com/profile/rahulxcodeforces"
+      },
+      "code360": {
+        "username": "rahulxninjas",
+        "url": "https://www.naukri.com/code360/profile/rahulxninjas"
+      },
+      "geeksforgeeks": {
+        "username": "rahulkumo88b",
+        "url": "https://www.geeksforgeeks.org/user/rahulkumo88b/"
+      },
+      "resume_pdf": {
+        "url": "https://drive.google.com/file/d/1CtBwvwxXaMn3tgoBT6EWJ9P7r4UOJkKr/view",
+        "notes": "Also present as rahul-cv.pdf in portfolio repo public/ directory"
+      }
+    },
+    "source": [
+      "user-provided data",
+      "portfolio source code",
+      "portfolio website"
+    ],
+    "confidence": "high"
+  },
+  "location": {
+    "country": "India",
+    "city": "Raipur",
+    "state": "Chhattisgarh",
+    "pin_code": "492010",
+    "area": "DDU Nagar, GOL Chok",
+    "preferred_work_locations": [
+      "Bengaluru",
+      "Pune",
+      "Hyderabad",
+      "Gurugram",
+      "Remote"
+    ],
+    "source": [
+      "user-provided data (address JSON)"
+    ],
+    "confidence": "high"
+  },
+  "privacy": {
+    "public": [
+      "name",
+      "email",
+      "github",
+      "linkedin",
+      "portfolio",
+      "leetcode",
+      "codechef",
+      "codeforces",
+      "code360",
+      "geeksforgeeks",
+      "city",
+      "state",
+      "country"
+    ],
+    "private": [
+      "phone",
+      "full_address",
+      "pin_code"
+    ],
+    "do_not_publish": [
+      "passwords",
+      "api_keys",
+      "tokens",
+      "cookies",
+      "authentication_secrets"
+    ]
+  },
+  "professional_profile": {
+    "primary_headline": "Full-Stack & AI Engineer",
+    "secondary_headlines": [
+      "MERN Stack Developer | AI/LLM Infrastructure | MCP Servers",
+      "Software Engineer — Full-Stack, AI, System Design",
+      "Full-Stack Engineer with AI Engineering Depth"
+    ],
+    "one_line_pitch": "Final-year NIT Raipur student who builds production-grade full-stack applications with real AI engineering depth — MCP servers, multi-provider LLM gateways, and offline-first architectures.",
+    "short_bio": "Final-year Bio-Medical Engineering student at NIT Raipur who builds products with real architectural decisions, not just assignments. Strongest differentiator is the AI engineering layer (MCP servers, RAG pipelines, LLM API integrations) usually missing from a typical MERN fresher profile. Self-taught, small-town background, got to NIT Raipur through competitive effort.",
+    "medium_bio": "I'm a final-year B.Tech student at NIT Raipur with hands-on production experience in full-stack engineering and AI infrastructure. During my internship at Bluestock Fintech, I shipped three production projects including Logic Looper (a daily puzzle platform with offline-first architecture) and an AI Profile Picture Maker using Stable Diffusion. My strongest work includes an AI Gateway that routes requests across 11 LLM providers with automatic failover, DriveClone with a native MCP server for AI agents, and multiple React/TypeScript applications. I've solved 500+ DSA problems, hold a LeetCode rating of 1,746, and scored 99.41 percentile in Naukri Young Turks 2025. I'm looking for SDE-1 / Full-Stack / AI Engineer roles at product companies and AI-first startups.",
+    "long_bio": "I'm Rahul Kumar, a final-year Bio-Medical Engineering student at NIT Raipur (graduating June 2026) who transitioned fully into software engineering through self-study and intense project work. My technical foundation spans the JavaScript/TypeScript ecosystem — React, Next.js, Node.js, Express, MongoDB, PostgreSQL — and extends deep into AI engineering territory.\n\nMy AI engineering work includes building a multi-provider LLM gateway (AI Gateway) that routes requests across 11 providers with automatic failover, error classification, and vision-aware routing. I built DriveClone, a full MERN Google Drive clone with a native MCP server that lets AI agents interact with the drive directly. I've worked with Stable Diffusion for AI-generated profile pictures using Docker, Redis, and BullMQ for async inference processing.\n\nDuring my SDE internship at Bluestock Fintech, I shipped three production projects end-to-end: Logic Looper (a daily puzzle platform with 10 puzzle types, Redux state management, and seed-driven deterministic generation), an AI Profile Picture Maker, and The Corporate Blog. I owned the full delivery lifecycle from architecture decisions to deployment.\n\nOn the competitive programming side, I've solved 500+ DSA problems, reached a LeetCode rating of 1,746, scored 99.41 percentile in Naukri Young Turks 2025, ranked 242 in NCAT 2026, and was shortlisted for Round 2 of the Polaris Fellowship.\n\nI'm also active in campus leadership — serving as Sponsorship & Outreach Lead for NIT Raipur's Innovation Cell and Technical Events Coordinator for the Robotics Club, where I co-organized a national hackathon with 200+ participants.\n\nI'm seeking SDE-1, Full-Stack Engineer, or AI Engineer roles at Indian product companies, AI-first startups, and funded companies in Bengaluru and other major hubs.",
+    "technical_positioning": "Full-stack engineer with production AI engineering depth that goes beyond typical MERN profiles — MCP servers, multi-provider LLM infrastructure, queue-based inference pipelines, and offline-first architectures.",
+    "engineering_philosophy": "Production-first thinking: every project should have real architecture decisions, not just feature checklists. Emphasis on offline resilience, proper state management, error handling, and deployment.",
+    "target_company_type": [
+      "Product companies",
+      "AI-first startups",
+      "Funded startups"
+    ],
+    "target_industry": [
+      "Technology",
+      "AI/ML",
+      "SaaS",
+      "Fintech"
+    ],
+    "target_roles": [
+      "SDE-1",
+      "Full-Stack Engineer",
+      "AI Engineer",
+      "Frontend Engineer",
+      "Software Development Engineer"
+    ],
+    "source": [
+      "user-provided data",
+      "GitHub repositories",
+      "portfolio"
+    ],
+    "confidence": "high"
+  },
+  "career_objective": {
+    "current_goal": "Targeting SDE-1 / Full-Stack Engineer / AI Engineer roles at Indian product companies, AI-first startups, and funded companies in Bengaluru and other major tech hubs. Available from June 2026.",
+    "target_roles": [
+      "SDE-1",
+      "Full-Stack Engineer",
+      "AI Engineer"
+    ],
+    "target_company_types": [
+      "Product companies",
+      "AI-first startups",
+      "Funded companies"
+    ],
+    "target_industries": [
+      "Technology",
+      "AI/ML",
+      "SaaS",
+      "Fintech"
+    ],
+    "source": [
+      "user-provided data",
+      "GitHub research",
+      "portfolio analysis"
+    ]
+  },
+  "education": [
+    {
+      "institution": "National Institute of Technology, Raipur",
+      "institution_short": "NIT Raipur",
+      "institution_type": "NIT (National Institute of Technology)",
+      "degree": "B.Tech",
+      "branch": "Bio-Medical Engineering",
+      "start_year": 2022,
+      "end_year": 2026,
+      "cgpa": {
+        "value": 6.31,
+        "scale": "10",
+        "source": "user-provided data, consistent across both JSON objects",
+        "confidence": "high"
+      },
+      "status": "final-year student",
+      "location": "Raipur, Chhattisgarh, India",
+      "relevant_coursework": [],
+      "relevant_coursework_notes": "No specific coursework listed in any source. Do not fabricate.",
+      "source": [
+        "user-provided data"
+      ],
+      "confidence": "high",
+      "verification": {
+        "status": "user_claim",
+        "notes": "CGPA 6.31 is consistent across both user-provided JSON objects. Portfolio website says 'Computer Science student' which conflicts — Bio-Medical Engineering is the correct branch per explicit user data.",
+        "checked_on": "2026-08-12"
+      }
+    }
+  ],
+  "experience": [
+    {
+      "company": "Bluestock Fintech",
+      "role": "SDE Intern",
+      "employment_type": "internship",
+      "location": "Remote",
+      "start_date": "2026-02",
+      "end_date": "2026-03",
+      "duration": "2 months",
+      "summary": "Built and shipped three production projects during the internship: Logic Looper (daily puzzle platform), an Open-Source AI Profile Picture Maker, and The Corporate Blog (TCB). Owned end-to-end delivery from architecture decisions to deployment.",
+      "responsibilities": [
+        "End-to-end delivery of three production projects",
+        "Architecture decisions and technical design",
+        "Bug fixing and code quality improvements",
+        "Production deployment and CI/CD"
+      ],
+      "achievements": [
+        "Shipped Logic Looper to production — a daily puzzle platform with 10 puzzle types, Redux state management, and seed-driven deterministic generation",
+        "Built an open-source AI Profile Picture Maker using Stable Diffusion",
+        "Shipped The Corporate Blog (TCB) as a corporate blogging platform",
+        "Fixed critical scoring bug in Logic Looper where startTimeRef never initialized, causing scores to compute as zero",
+        "Rewrote puzzle generators to be seed-driven for deterministic daily puzzles",
+        "Replaced hardcoded URLs with environment variables",
+        "Moved Firebase credentials out of source code",
+        "Added proper Redux Provider",
+        "Cleaned out 13 dead files from the codebase"
+      ],
+      "technologies": [
+        "React",
+        "Redux Toolkit",
+        "React Redux",
+        "Firebase",
+        "React Router DOM",
+        "JavaScript",
+        "Node.js"
+      ],
+      "technologies_claimed_but_not_verified_in_repo": [
+        {
+          "tech": "PostgreSQL",
+          "note": "User claims backend uses PostgreSQL but no backend directory or database config found in logic-looper repo"
+        },
+        {
+          "tech": "Prisma",
+          "note": "User claims Prisma ORM but not found in logic-looper repo dependencies"
+        },
+        {
+          "tech": "IndexedDB",
+          "note": "User claims offline-first with IndexedDB but no IndexedDB usage found in repo"
+        },
+        {
+          "tech": "CI/CD",
+          "note": "User claims CI/CD but no GitHub Actions workflows found in logic-looper repo"
+        },
+        {
+          "tech": "Load testing",
+          "note": "User claims load testing but no evidence found in repo"
+        }
+      ],
+      "metrics": [],
+      "metrics_notes": "No specific quantitative metrics verified from source. User claims include 'production deployment' and 'end-to-end delivery' which are supported by the project's deployed state.",
+      "links": [
+        {
+          "type": "logic-looper repo",
+          "url": "https://github.com/rahulxgit/logic-looper"
+        }
+      ],
+      "source": [
+        "user-provided data",
+        "logic-looper repository"
+      ],
+      "confidence": "high",
+      "verification": {
+        "status": "partially_verified",
+        "notes": "Internship company and role confirmed from user data. Logic Looper repo exists with React/Redux/Firebase stack verified. Some claimed technologies (PostgreSQL, Prisma, IndexedDB, CI/CD, load testing) not found in the repository.",
+        "checked_on": "2026-08-12"
+      }
+    }
+  ],
+  "research": [
+    {
+      "organization": "3D Printing Lab, NIT Raipur",
+      "role": "Research Intern",
+      "period": "not specified",
+      "tools": [
+        "SolidWorks",
+        "COMSOL Multiphysics"
+      ],
+      "work_areas": [
+        "Additive manufacturing systems",
+        "Product prototyping",
+        "3D printing"
+      ],
+      "engineering_work": "Worked with SolidWorks, COMSOL Multiphysics, and additive manufacturing systems for product prototyping",
+      "source": [
+        "user-provided data"
+      ],
+      "confidence": "high",
+      "verification": {
+        "status": "user_claim",
+        "checked_on": "2026-08-12"
+      }
+    }
+  ],
+  "projects": {
+    "flagship_projects": [
+      {
+        "name": "Logic Looper",
+        "slug": "logic-looper",
+        "category": "flagship",
+        "tagline": "Client-first daily puzzle platform",
+        "description": "A daily puzzle platform built client-first for speed and offline resilience. Features 10 puzzle types with seed-driven deterministic puzzle generation, Redux state management, Firebase authentication, user profiles with streak tracking, and a component-based architecture with separate puzzle generators and validators.",
+        "problem": "Building an engaging daily puzzle platform that works reliably, generates consistent puzzles, and provides accurate scoring",
+        "solution": "Client-first architecture with deterministic seed-driven puzzle generation, Redux for state management, Firebase for auth/persistence, and separated puzzle generation/validation utilities",
+        "features": [
+          "10 puzzle games: Sudoku, Binary Puzzle, Futoshiki, KenKen, Logic Grid, MathCross, Nonogram, PatternLock, Set Game, Skyscraper",
+          "Seed-driven deterministic daily puzzle generation",
+          "Puzzle validation engine",
+          "User profiles with Firebase Auth",
+          "Redux state management (game state + user state)",
+          "React Router navigation",
+          "Streak tracking",
+          "Score calculation"
+        ],
+        "architecture": [
+          "Component-based React architecture with separated game components",
+          "Redux slices for game state (gameSlice.js) and user state (userSlice.js)",
+          "Services layer for Firebase interactions",
+          "Utility functions for puzzle generation and validation",
+          "Separate puzzleGenerators/ and validators/ directories"
+        ],
+        "technical_decisions": [
+          "Fixed scoring bug where startTimeRef never initialized, causing scores to compute as zero",
+          "Rewrote puzzle generators to be seed-driven for deterministic daily puzzles",
+          "Replaced hardcoded URLs with environment variables",
+          "Moved Firebase credentials out of source code into environment config",
+          "Added proper Redux Provider wrapper",
+          "Cleaned out 13 dead files from codebase"
+        ],
+        "engineering_challenges": [
+          {
+            "challenge": "Scoring bug — startTimeRef never initializing",
+            "root_cause": "startTimeRef was never set to the current time when a puzzle started, so time-based score computation always received zero elapsed time",
+            "fix": "Properly initialized startTimeRef when puzzle timer begins",
+            "impact": "Scores could actually be computed and tracked correctly",
+            "interview_value": "concrete before/after debugging story"
+          },
+          {
+            "challenge": "Non-deterministic puzzle generation",
+            "root_cause": "Puzzles were randomly generated each session, making daily puzzle consistency impossible",
+            "fix": "Rewrote generators to be seed-driven, where the seed is derived from the date",
+            "impact": "All users see the same puzzle on the same day",
+            "interview_value": "demonstrates understanding of deterministic algorithms"
+          }
+        ],
+        "performance": [],
+        "scalability": [],
+        "offline_support": {
+          "claimed": "offline-first architecture with IndexedDB",
+          "verified": false,
+          "notes": "User claims offline-first with IndexedDB but no IndexedDB usage found in repository inspection. Firebase is the only persistence layer found."
+        },
+        "testing": {
+          "libraries_present": [
+            "@testing-library/jest-dom",
+            "@testing-library/react",
+            "@testing-library/user-event"
+          ],
+          "custom_tests_found": false,
+          "notes": "Testing libraries are in package.json dependencies but no custom test files were found"
+        },
+        "deployment": {
+          "platform": "Vercel",
+          "verified": true,
+          "source": [
+            "user-provided data"
+          ]
+        },
+        "ci_cd": {
+          "claimed": true,
+          "github_actions_found": false,
+          "notes": "User claims CI/CD but no GitHub Actions workflows found in repository"
+        },
+        "technologies": {
+          "verified": [
+            "React 19",
+            "Redux Toolkit",
+            "React Redux",
+            "React Router DOM v7",
+            "Firebase",
+            "JavaScript",
+            "Vanilla CSS"
+          ],
+          "claimed_not_verified": [
+            "PostgreSQL",
+            "Prisma",
+            "IndexedDB",
+            "CI/CD pipeline",
+            "Load testing"
+          ]
+        },
+        "apis": [
+          "Firebase Auth",
+          "Firebase Firestore"
+        ],
+        "databases": {
+          "verified": [
+            "Firebase Firestore"
+          ],
+          "claimed_not_verified": [
+            "PostgreSQL",
+            "IndexedDB"
+          ]
+        },
+        "ai_components": [],
+        "links": {
+          "github": "https://github.com/rahulxgit/logic-looper",
+          "live": "https://logic-looper-mu.vercel.app/",
+          "demo": null
+        },
+        "role": "Creator / Developer (internship project at Bluestock Fintech)",
+        "status": "shipped to production",
+        "portfolio_claimed_metrics": {
+          "api_call_reduction": "~70%",
+          "offline_capability": "100%",
+          "puzzles_per_year": "365+",
+          "server_storage_cost": "$0",
+          "validation_latency": "<50ms",
+          "backend_response_improvement": "~40%",
+          "concurrent_users": "500+",
+          "server_load_reduction": "~60%",
+          "dau_readiness": "1M",
+          "source": "portfolio website",
+          "verified": false,
+          "notes": "These metrics appear on the current portfolio website. They describe design goals and architectural claims, not independently measured production metrics."
+        },
+        "interview_value": "high — has real architecture decisions, a concrete before/after bug fix story, and demonstrates production ownership during internship",
+        "resume_bullets": [
+          "Built Logic Looper, a daily puzzle platform with 10 puzzle types and seed-driven deterministic generation, shipped to production during Bluestock Fintech internship",
+          "Fixed critical scoring bug where startTimeRef never initialized, causing scores to compute as zero — demonstrates real debugging under production constraints",
+          "Implemented Redux state management with separate game and user slices, Firebase Auth, and component-based architecture"
+        ],
+        "source": [
+          "user-provided data",
+          "GitHub repo (deep inspection)"
+        ],
+        "confidence": "high"
+      },
+      {
+        "name": "DriveClone",
+        "slug": "driveclone",
+        "category": "flagship",
+        "tagline": "Google Drive clone with a native MCP server for AI agents",
+        "description": "A full MERN Google Drive clone with JWT authentication, Cloudinary-backed file storage, and a native MCP server that lets AI agents interact with the drive directly. Backend deployed on Render, frontend on Vercel. Includes user authentication, file upload/download, folder management, and responsive design.",
+        "problem": "Building a cloud storage platform that not only serves human users but also enables AI agents to interact with the file system programmatically",
+        "solution": "Full MERN stack application with a separate MCP server module providing AI agent tools for file operations, JWT-based authentication, and Cloudinary for file storage",
+        "features": [
+          "User authentication (Register/Login) with JWT",
+          "File upload with Cloudinary storage",
+          "Create folders and nested folder navigation",
+          "Download files",
+          "Delete files and folders",
+          "Responsive mobile-friendly UI",
+          "MCP server for AI agent file operations"
+        ],
+        "architecture": [
+          "Monorepo: client/ (React frontend) + root (Express backend) + mcp-server/ (MCP server)",
+          "Models: User, File, Folder (Mongoose schemas)",
+          "Routes: auth, files, folders (Express routes)",
+          "Middleware: JWT authentication",
+          "MCP Server: separate Node.js service with tool implementations",
+          "Client: React with Context API for auth state, services layer for API calls"
+        ],
+        "technical_decisions": [
+          "Cloudinary for file storage instead of local filesystem — enables cloud-native deployment",
+          "Separate MCP server module for AI agent integration",
+          "JWT with bcryptjs for authentication",
+          "Multer + multer-storage-cloudinary for file upload handling"
+        ],
+        "engineering_challenges": [
+          {
+            "challenge": "Peer dependency conflict between cloudinary@2.x and multer-storage-cloudinary@4.x",
+            "fix": "Resolved using --legacy-peer-deps flag",
+            "interview_value": "demonstrates practical dependency management experience"
+          }
+        ],
+        "mcp_server": {
+          "location": "mcp-server/ directory in repo",
+          "tools": [
+            "listFiles — list files and folders",
+            "uploadFile — upload files to drive",
+            "downloadFile — download files from drive",
+            "createFolder — create new folders",
+            "deleteItem — delete files and folders"
+          ],
+          "architecture": "Separate Node.js service with individual tool modules",
+          "purpose": "Enables AI agents (like Claude) to interact with the drive through Model Context Protocol"
+        },
+        "performance": [],
+        "scalability": [],
+        "security": [
+          "JWT authentication",
+          "bcryptjs password hashing"
+        ],
+        "testing": {
+          "found": false,
+          "notes": "No testing configuration or test files found in repository"
+        },
+        "deployment": {
+          "frontend": "Vercel",
+          "backend": "Render",
+          "verified": true,
+          "source": [
+            "GitHub repo README"
+          ]
+        },
+        "ci_cd": {
+          "found": false,
+          "notes": "No CI/CD configuration found"
+        },
+        "technologies": {
+          "verified": [
+            "React 19",
+            "Tailwind CSS 4",
+            "React Router v7",
+            "Axios",
+            "Lucide React",
+            "Node.js",
+            "Express.js 4",
+            "MongoDB (Mongoose 8)",
+            "MongoDB Atlas",
+            "Cloudinary",
+            "Multer",
+            "multer-storage-cloudinary",
+            "JWT (jsonwebtoken)",
+            "bcryptjs",
+            "MCP (Model Context Protocol)"
+          ]
+        },
+        "apis": [
+          "Cloudinary API",
+          "MongoDB Atlas",
+          "Custom REST API"
+        ],
+        "databases": {
+          "verified": [
+            "MongoDB Atlas (Mongoose 8)"
+          ]
+        },
+        "ai_components": [
+          "MCP Server (5 tools)"
+        ],
+        "links": {
+          "github": "https://github.com/rahulxgit/driveclone",
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "deployed",
+        "interview_value": "high — demonstrates AI engineering layer (MCP server) beyond a standard MERN CRUD app, plus real dependency resolution challenges",
+        "resume_bullets": [
+          "Built DriveClone, a full MERN Google Drive clone with JWT auth, Cloudinary storage, and a native MCP server enabling AI agents to perform file operations",
+          "Implemented 5 MCP tool endpoints (list, upload, download, create, delete) for AI agent interaction via Model Context Protocol",
+          "Deployed frontend on Vercel, backend on Render with MongoDB Atlas and Cloudinary integration"
+        ],
+        "source": [
+          "user-provided data",
+          "GitHub repo (deep inspection)"
+        ],
+        "confidence": "high"
+      },
+      {
+        "name": "AI Gateway",
+        "slug": "ai-gateway",
+        "category": "flagship",
+        "tagline": "Multi-provider LLM gateway with automatic failover",
+        "description": "A TypeScript gateway that routes requests across 11 LLM providers with automatic failover, error classification, and vision-aware provider filtering. Persists conversation context in SQLite so a failover mid-chat doesn't lose history. Ships a React dashboard for watching provider health and request logs live. Containerized with Docker and covered with Jest tests.",
+        "problem": "LLM applications dependent on a single provider face downtime, rate limits, and capability gaps. No unified interface exists for routing across multiple providers with intelligent failover.",
+        "solution": "A TypeScript gateway with provider abstraction layer, error classification engine, failover decision engine, vision-aware routing, SQLite conversation persistence, and React monitoring dashboard",
+        "features": [
+          "Multi-provider support — routes requests across 11+ LLM providers",
+          "Automatic failover — seamlessly switches providers on failure",
+          "Error classification — categorizes errors (rate limit, auth, timeout, etc.)",
+          "Vision-aware routing — automatically filters providers based on vision capability needs",
+          "Conversation persistence — SQLite-based conversation storage",
+          "Provider health monitoring — tracks provider health and response times",
+          "React dashboard — real-time provider health visualization, request/response log viewer, conversation history browser, provider configuration management"
+        ],
+        "architecture": [
+          "Provider abstraction layer with base class (base.ts) and per-provider implementations",
+          "Error classification engine (errorClassifier.ts)",
+          "Failover decision engine (failover.ts)",
+          "Request routing logic (router.ts)",
+          "SQLite database layer for conversation persistence",
+          "Express.js API server with structured routes",
+          "React dashboard (separate client app)",
+          "Winston logging for structured logs",
+          "Docker containerization with docker-compose"
+        ],
+        "supported_providers": [
+          "OpenAI",
+          "Anthropic (Claude)",
+          "Google (Gemini)",
+          "Mistral",
+          "Cohere",
+          "Groq",
+          "Together AI",
+          "Perplexity",
+          "DeepSeek",
+          "OpenRouter",
+          "Fireworks AI"
+        ],
+        "api_endpoints": [
+          "POST /api/chat — Send message with automatic failover",
+          "GET /api/providers — List available providers",
+          "GET /api/conversations — List conversations",
+          "GET /api/health — Provider health status",
+          "GET /api/logs — Request logs"
+        ],
+        "technical_decisions": [
+          "SQLite for conversation persistence — lightweight, no external database required",
+          "Provider abstraction with base class — consistent interface for all providers",
+          "Error classification before failover — intelligent routing based on error type",
+          "Vision-aware filtering — prevents routing vision requests to text-only providers",
+          "Winston for structured logging"
+        ],
+        "engineering_challenges": [],
+        "performance": [],
+        "scalability": [],
+        "security": [],
+        "testing": {
+          "framework": "Jest with ts-jest",
+          "config": "jest.config.ts",
+          "test_directory": "tests/",
+          "verified": true
+        },
+        "deployment": {
+          "docker": true,
+          "dockerfile": true,
+          "docker_compose": true,
+          "env_example": true,
+          "verified": true,
+          "source": [
+            "GitHub repo"
+          ]
+        },
+        "ci_cd": {
+          "found": false
+        },
+        "technologies": {
+          "verified": [
+            "TypeScript 5",
+            "Node.js",
+            "Express.js 4",
+            "SQLite (better-sqlite3)",
+            "React (dashboard)",
+            "TypeScript (dashboard)",
+            "Jest",
+            "ts-jest",
+            "Docker",
+            "Docker Compose",
+            "Winston (logging)",
+            "uuid",
+            "cors",
+            "dotenv"
+          ]
+        },
+        "apis": [
+          "11 LLM provider APIs"
+        ],
+        "databases": {
+          "verified": [
+            "SQLite (better-sqlite3)"
+          ]
+        },
+        "ai_components": [
+          "Multi-provider LLM routing",
+          "Automatic failover",
+          "Error classification",
+          "Vision-aware routing",
+          "Conversation context persistence"
+        ],
+        "links": {
+          "github": "https://github.com/rahulxgit/ai-gateway",
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "complete",
+        "interview_value": "highest — strongest AI-infra project with real failover/error-classification logic, not just a wrapper around one API. Demonstrates system design thinking.",
+        "resume_bullets": [
+          "Built an AI Gateway routing requests across 11 LLM providers (OpenAI, Claude, Gemini, etc.) with automatic failover, error classification, and vision-aware provider filtering",
+          "Implemented SQLite-based conversation persistence ensuring failover mid-chat preserves context, with a React dashboard for real-time provider health monitoring",
+          "Containerized with Docker, covered with Jest tests, and structured with TypeScript provider abstraction layer"
+        ],
+        "source": [
+          "user-provided data",
+          "GitHub repo (deep inspection)"
+        ],
+        "confidence": "high"
+      }
+    ],
+    "ai_projects": [
+      {
+        "name": "AI Inference Playground",
+        "slug": "ai-inference-playground",
+        "category": "ai_project",
+        "tagline": "React + TypeScript LLM inference playground",
+        "description": "A multi-modal LLM inference playground with token streaming via SSE, live latency/throughput metrics, WCAG AA accessibility, and a custom LCS-based token diff viewer for comparing model outputs.",
+        "features": [
+          "Multi-model testing — test prompts across multiple LLM providers",
+          "Token streaming — real-time Server-Sent Events (SSE) streaming",
+          "Live metrics — real-time latency and throughput measurements",
+          "Token diff viewer — custom LCS-based token diff for comparing model outputs",
+          "WCAG AA accessibility — fully accessible interface",
+          "Responsive design"
+        ],
+        "architecture": [
+          "Component-based: ChatInterface, DiffViewer, MetricsPanel, ModelSelector, StreamingOutput",
+          "Custom hooks: useStreaming (streaming management), useMetrics (metrics calculation)",
+          "Utility modules: tokenDiff.ts (LCS algorithm), metrics.ts",
+          "Vite-based build"
+        ],
+        "technologies": {
+          "verified": [
+            "React 18",
+            "TypeScript 5",
+            "Vite 6",
+            "Tailwind CSS 3",
+            "Lucide React",
+            "SSE (Server-Sent Events)"
+          ]
+        },
+        "links": {
+          "github": "https://github.com/rahulxgit/ai-inference-playground",
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "complete",
+        "interview_value": "high — demonstrates custom algorithm implementation (LCS diff), accessibility awareness, and real-time streaming architecture",
+        "resume_bullets": [
+          "Built an AI Inference Playground with real-time token streaming (SSE), live latency/throughput metrics, and a custom LCS-based diff viewer for comparing model outputs",
+          "Implemented WCAG AA accessible components and custom React hooks for streaming management and metrics calculation"
+        ],
+        "source": [
+          "user-provided data",
+          "GitHub repo (deep inspection)"
+        ],
+        "confidence": "high"
+      },
+      {
+        "name": "AI Profile Picture Maker",
+        "slug": "ai-profile-picture-maker",
+        "category": "ai_project",
+        "tagline": "Open-source AI profile picture generator",
+        "description": "Open-source tool for generating AI profile pictures, built during the Bluestock Fintech internship. Uses Stable Diffusion for image generation, GFPGAN for face enhancement, and rembg for background removal.",
+        "features": [
+          "AI-generated profile pictures using Stable Diffusion",
+          "Face enhancement with GFPGAN",
+          "Background removal with rembg",
+          "Asynchronous inference processing"
+        ],
+        "architecture_claimed": [
+          "Stable Diffusion for image generation",
+          "GFPGAN for face enhancement",
+          "rembg for background removal",
+          "Docker containerization",
+          "Redis + BullMQ for async job processing",
+          "Stateless architecture"
+        ],
+        "technologies_claimed": [
+          "React",
+          "Stable Diffusion",
+          "GFPGAN",
+          "rembg",
+          "Docker",
+          "Redis",
+          "BullMQ",
+          "Python"
+        ],
+        "links": {
+          "github": null,
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer (internship project at Bluestock Fintech)",
+        "status": "shipped during internship",
+        "interview_value": "moderate — demonstrates AI model integration and async processing architecture",
+        "resume_bullets": [
+          "Built an open-source AI Profile Picture Maker using Stable Diffusion, GFPGAN face enhancement, and rembg background removal during Bluestock Fintech internship"
+        ],
+        "source": [
+          "user-provided data"
+        ],
+        "confidence": "moderate",
+        "verification": {
+          "status": "user_claim",
+          "notes": "Described in user data. No dedicated GitHub repo URL provided for this project. Technology stack (Docker, Redis, BullMQ, Stable Diffusion) not verified from source code.",
+          "checked_on": "2026-08-12"
+        }
+      },
+      {
+        "name": "ConversAI",
+        "slug": "conversai",
+        "category": "ai_project",
+        "tagline": "ChatGPT-style AI chat application",
+        "description": "A modern ChatGPT-style AI chat application with a React frontend, Node.js/Express backend, MongoDB database, and OpenAI API integration. Features chat interface with streaming responses, conversation history, user authentication, and responsive design.",
+        "features": [
+          "Chat interface with streaming responses",
+          "Conversation history",
+          "User authentication",
+          "Responsive design",
+          "OpenAI API integration"
+        ],
+        "technologies": {
+          "verified": [
+            "React 18",
+            "React Router v7",
+            "Axios",
+            "Node.js",
+            "Express.js 4",
+            "MongoDB (Mongoose 8)",
+            "OpenAI API (openai npm package)"
+          ]
+        },
+        "links": {
+          "github": "https://github.com/rahulxgit/ConversAI",
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "complete",
+        "interview_value": "moderate — demonstrates MERN + LLM API integration",
+        "resume_bullets": [
+          "Built ConversAI, a ChatGPT-style application with streaming responses using React, Node.js/Express, MongoDB, and OpenAI API integration"
+        ],
+        "source": [
+          "user-provided data",
+          "GitHub repo"
+        ],
+        "confidence": "high"
+      },
+      {
+        "name": "AI SEO Audit Platform",
+        "slug": "ai-seo-audit-platform",
+        "category": "ai_project",
+        "tagline": "AI-powered SEO audit platform",
+        "description": "SEO audit platform with AI-powered analysis for analyzing websites for SEO issues.",
+        "technologies_claimed": [],
+        "links": {
+          "github": "https://github.com/rahulxgit/ai-seo-audit-platform",
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "unknown",
+        "professional_relevance": "medium",
+        "source": [
+          "GitHub repo"
+        ],
+        "confidence": "low",
+        "notes": "Repository exists but limited content was available for inspection"
+      }
+    ],
+    "professional_projects": [
+      {
+        "name": "Smart Bookmark App",
+        "slug": "smart-bookmark-app",
+        "category": "professional",
+        "tagline": "Full-stack bookmark manager with SSR-compatible auth",
+        "description": "A production-ready bookmark manager with SSR-compatible auth via Supabase and a layered UI to Hooks to Services to Database architecture. Includes role-based access control with protected routes.",
+        "features": [
+          "CRUD operations for bookmarks",
+          "Tagging and search",
+          "SSR-compatible authentication with Supabase",
+          "Role-based access control (RBAC)",
+          "Protected routes",
+          "Layered architecture"
+        ],
+        "architecture": [
+          "UI to Hooks to Services to Database layered architecture",
+          "Next.js 15 with App Router",
+          "Supabase SSR package for auth"
+        ],
+        "technologies": {
+          "verified": [
+            "Next.js 15",
+            "React 19",
+            "TypeScript 5",
+            "Supabase (@supabase/ssr + @supabase/supabase-js)",
+            "Tailwind CSS 4"
+          ]
+        },
+        "links": {
+          "github": "https://github.com/rahulxgit/smart-bookmark-app",
+          "live": null,
+          "demo": "https://www.loom.com/share/71832d00480b434eb2835f2d4fd92eee"
+        },
+        "role": "Creator / Developer",
+        "status": "complete",
+        "interview_value": "moderate — demonstrates layered architecture and SSR auth patterns",
+        "resume_bullets": [
+          "Built a production-ready bookmark manager with Next.js 15, Supabase SSR auth, RBAC, and a layered UI to Hooks to Services to Database architecture"
+        ],
+        "source": [
+          "user-provided data",
+          "GitHub repo"
+        ],
+        "confidence": "high"
+      },
+      {
+        "name": "Realtime Gallery",
+        "slug": "realtime-gallery",
+        "category": "professional",
+        "tagline": "Multi-user collaborative gallery with live sync",
+        "description": "A collaborative gallery with instant emoji reactions and comments, synced across devices via InstantDB with no polling. Built as an event-driven state sync exercise using Zustand and custom React hooks.",
+        "features": [
+          "Real-time collaborative photo gallery",
+          "Instant emoji reactions",
+          "Comments",
+          "Cross-device sync via InstantDB",
+          "No polling — event-driven sync",
+          "Zustand state management with custom React hooks"
+        ],
+        "technologies": {
+          "verified": [
+            "React 19",
+            "TypeScript",
+            "Vite 6",
+            "InstantDB (@instantdb/react)",
+            "Zustand 5",
+            "Tailwind CSS 4",
+            "Lucide React"
+          ]
+        },
+        "links": {
+          "github": "https://github.com/rahulxgit/realtime-gallery",
+          "live": "https://realtime-gallery-tau.vercel.app/",
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "deployed on Vercel",
+        "interview_value": "moderate — demonstrates real-time architecture and event-driven patterns",
+        "resume_bullets": [
+          "Built a real-time collaborative gallery with InstantDB sync, emoji reactions, and Zustand state management — deployed on Vercel with no-polling event-driven architecture"
+        ],
+        "source": [
+          "user-provided data",
+          "GitHub repo",
+          "user-provided address data (website field)"
+        ],
+        "confidence": "high"
+      },
+      {
+        "name": "Dubai Mall Sales Deck",
+        "slug": "dubai-mall-sales-deck",
+        "category": "professional",
+        "tagline": "Cinematic frontend assignment",
+        "description": "A frontend assignment built to look production-grade: cinematic scroll animations and micro-interactions with Framer Motion, strongly typed React/TypeScript components, and a mobile-first responsive layout.",
+        "features": [
+          "Cinematic scroll animations",
+          "Micro-interactions with Framer Motion",
+          "Strongly typed React/TypeScript components",
+          "Mobile-first responsive layout"
+        ],
+        "technologies": {
+          "verified": [
+            "React 19",
+            "TypeScript",
+            "Vite 6",
+            "Framer Motion 12",
+            "Tailwind CSS 4",
+            "Lucide React"
+          ]
+        },
+        "links": {
+          "github": "https://github.com/rahulxgit/dubai-mall-sales-deck",
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "complete",
+        "interview_value": "low-moderate — demonstrates animation skills and frontend polish",
+        "resume_bullets": [
+          "Built a cinematic sales deck with Framer Motion scroll animations, micro-interactions, and mobile-first responsive design using React and TypeScript"
+        ],
+        "source": [
+          "user-provided data",
+          "GitHub repo"
+        ],
+        "confidence": "high"
+      },
+      {
+        "name": "The Corporate Blog (TCB)",
+        "slug": "the-corporate-blog",
+        "category": "professional",
+        "tagline": "Blogging platform built during internship",
+        "description": "A corporate blog platform shipped as one of three production projects during the Bluestock Fintech internship.",
+        "technologies_claimed": [
+          "React",
+          "Node.js"
+        ],
+        "links": {
+          "github": null,
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer (internship project at Bluestock Fintech)",
+        "status": "shipped during internship",
+        "interview_value": "low — part of internship output but no technical details available",
+        "source": [
+          "user-provided data"
+        ],
+        "confidence": "moderate",
+        "verification": {
+          "status": "user_claim",
+          "notes": "No GitHub repo or live link provided for this project",
+          "checked_on": "2026-08-12"
+        }
+      },
+      {
+        "name": "Sales Performance Dashboard",
+        "slug": "sales-performance-dashboard",
+        "category": "professional",
+        "tagline": "Power BI dashboard with 25+ DAX measures",
+        "description": "A six-page Power BI Sales Performance Dashboard built for a data analyst assignment, with 25+ DAX measures and sample datasets.",
+        "technologies_claimed": [
+          "Power BI",
+          "DAX"
+        ],
+        "links": {
+          "github": null,
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "complete",
+        "interview_value": "low — data analytics focused, not core SDE",
+        "source": [
+          "user-provided data"
+        ],
+        "confidence": "moderate"
+      }
+    ],
+    "data_projects": [
+      {
+        "name": "Swiggy SQL Case Study",
+        "slug": "swiggy-sql-case-study",
+        "category": "data",
+        "tagline": "SQL case study on operational and user behavior data",
+        "description": "A SQL case study analyzing Swiggy-style operational and user behavior data, covering cohort analysis, funnel metrics, revenue reporting, customer behavior analysis, and order pattern queries.",
+        "features": [
+          "Schema creation scripts",
+          "Cohort analysis queries",
+          "Funnel metrics",
+          "Revenue reporting",
+          "Customer behavior analysis",
+          "Order pattern analysis"
+        ],
+        "technologies": {
+          "verified": [
+            "SQL (PostgreSQL dialect)"
+          ]
+        },
+        "links": {
+          "github": "https://github.com/rahulxgit/Swiggy-Case-Study-SQL",
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "complete",
+        "interview_value": "moderate — demonstrates SQL and analytical thinking",
+        "resume_bullets": [
+          "Designed and implemented SQL case study with cohort analysis, funnel metrics, and revenue reporting queries on Swiggy-style operational data"
+        ],
+        "source": [
+          "user-provided data",
+          "GitHub repo"
+        ],
+        "confidence": "high"
+      }
+    ],
+    "fullstack_projects": [
+      {
+        "name": "MUME (Meet Ur Matching Energy)",
+        "slug": "mume-react-native",
+        "category": "fullstack",
+        "tagline": "Cross-platform mobile application",
+        "description": "A cross-platform mobile application for MUME (Meet Ur Matching Energy) built with React Native and Expo. Features user profiles, matching algorithm, and real-time chat.",
+        "features_claimed": [
+          "User profiles",
+          "Matching algorithm",
+          "Real-time chat",
+          "Cross-platform (iOS/Android)"
+        ],
+        "technologies": {
+          "verified": [
+            "React Native",
+            "Expo",
+            "React Navigation",
+            "TypeScript"
+          ]
+        },
+        "links": {
+          "github": "https://github.com/rahulxgit/mume-react-native",
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "unknown",
+        "professional_relevance": "medium",
+        "source": [
+          "GitHub repo"
+        ],
+        "confidence": "moderate"
+      }
+    ],
+    "automation_projects": [
+      {
+        "name": "Job Alert Bot",
+        "slug": "job-alert-bot",
+        "category": "automation",
+        "tagline": "Automated job posting monitor",
+        "description": "Job alert bot that monitors job postings and sends notifications for matching jobs.",
+        "technologies_claimed": [
+          "Node.js"
+        ],
+        "links": {
+          "github": "https://github.com/rahulxgit/job-alert-bot",
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "unknown",
+        "professional_relevance": "medium",
+        "source": [
+          "GitHub repo"
+        ],
+        "confidence": "low"
+      },
+      {
+        "name": "Form Automation",
+        "slug": "form-automation",
+        "category": "automation",
+        "tagline": "Browser form automation tool",
+        "description": "Automation tool for filling out forms using browser automation.",
+        "technologies_claimed": [
+          "JavaScript",
+          "Playwright"
+        ],
+        "links": {
+          "github": "https://github.com/rahulxgit/form-automation",
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "unknown",
+        "professional_relevance": "medium",
+        "source": [
+          "GitHub repo",
+          "user-provided data (Playwright in skills)"
+        ],
+        "confidence": "low"
+      },
+      {
+        "name": "GrowEasy CSV Importer",
+        "slug": "groweasy-csv-importer",
+        "category": "automation",
+        "tagline": "CSV data import tool",
+        "description": "CSV importer tool, part of GrowEasy platform.",
+        "links": {
+          "github": "https://github.com/rahulxgit/groweasy-csv-importer",
+          "live": null,
+          "demo": null
+        },
+        "role": "Creator / Developer",
+        "status": "unknown",
+        "professional_relevance": "low",
+        "source": [
+          "GitHub repo"
+        ],
+        "confidence": "low"
+      }
+    ],
+    "learning_projects": [
+      {
+        "name": "Zerodha Clone",
+        "slug": "zerodha",
+        "category": "learning",
+        "tagline": "Stock trading platform UI clone",
+        "description": "A clone of the popular stock trading platform Zerodha, built to practice frontend development skills.",
+        "technologies": {
+          "verified": [
+            "React",
+            "JavaScript",
+            "CSS"
+          ]
+        },
+        "links": {
+          "github": "https://github.com/rahulxgit/Zerodha",
+          "live": null,
+          "demo": null
+        },
+        "professional_relevance": "low",
+        "source": [
+          "GitHub repo",
+          "portfolio website"
+        ],
+        "confidence": "high"
+      },
+      {
+        "name": "Zoom Clone",
+        "slug": "zoom",
+        "category": "learning",
+        "tagline": "Video conferencing application clone",
+        "description": "A video conferencing application clone built with modern web technologies including WebRTC.",
+        "technologies": {
+          "verified": [
+            "JavaScript",
+            "Node.js",
+            "WebRTC"
+          ]
+        },
+        "links": {
+          "github": "https://github.com/rahulxgit/Zoom",
+          "live": null,
+          "demo": null
+        },
+        "professional_relevance": "low",
+        "source": [
+          "GitHub repo",
+          "portfolio website"
+        ],
+        "confidence": "high"
+      },
+      {
+        "name": "5 Most Used Algorithms in AI",
+        "slug": "5-most-used-algorithms-in-ai",
+        "category": "learning",
+        "tagline": "Educational AI algorithm notebooks",
+        "description": "Jupyter Notebooks covering the 5 most commonly used algorithms in AI/ML.",
+        "technologies": {
+          "verified": [
+            "Python",
+            "Jupyter Notebook"
+          ]
+        },
+        "links": {
+          "github": "https://github.com/rahulxgit/5-most-used-algorithms-in-AI",
+          "live": null,
+          "demo": null
+        },
+        "professional_relevance": "low",
+        "source": [
+          "GitHub repo"
+        ],
+        "confidence": "high"
+      }
+    ],
+    "practice_repositories": [
+      {
+        "name": "Leetcode-Solution",
+        "slug": "leetcode-solution",
+        "category": "practice",
+        "description": "All the Important Leetcode Solutions in Java with explanation",
+        "language": "Java",
+        "links": {
+          "github": "https://github.com/rahulxgit/Leetcode-Solution"
+        },
+        "professional_relevance": "low (but supports DSA claims)",
+        "source": [
+          "GitHub repo"
+        ]
+      }
+    ],
+    "archived_or_low_priority": [
+      {
+        "name": "Zoom_Project",
+        "slug": "zoom-project",
+        "links": {
+          "github": "https://github.com/rahulxgit/Zoom_Project"
+        },
+        "notes": "Appears to be related to or earlier version of Zoom clone",
+        "professional_relevance": "low"
+      },
+      {
+        "name": "rahulxgit (profile config)",
+        "slug": "rahulxgit-config",
+        "links": {
+          "github": "https://github.com/rahulxgit/rahulxgit"
+        },
+        "description": "Config files for GitHub profile",
+        "professional_relevance": "none"
+      }
+    ]
+  }
+}

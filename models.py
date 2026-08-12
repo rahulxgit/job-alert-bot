@@ -1,7 +1,6 @@
 """Shared data models used across the whole pipeline."""
 from dataclasses import dataclass, field, asdict
 
-
 @dataclass
 class JobListing:
     """One job/internship candidate, regardless of which source found it."""
@@ -19,14 +18,24 @@ class JobListing:
     reason: str = ""
     recruiter_email: str = ""
 
-    # optional metadata — not every source can populate these, so both
-    # default to "" and nothing downstream should assume they're set
+    # optional metadata
     posting_date: str = ""
     employment_type: str = ""
 
+    # structured matching dimensions
+    role_match: int = 0
+    experience_match: int = 0
+    technical_match: int = 0
+    project_match: int = 0
+    education_match: int = 0
+    location_match: int = 0
+    company_quality: int = 0
+
+    fit_tier: str = ""
+    gaps: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         return asdict(self)
-
 
 @dataclass
 class FitVerdict:
@@ -34,4 +43,17 @@ class FitVerdict:
     fit_score: int = 0
     is_fresher_appropriate: bool = False
     reason: str = "evaluation failed"
-    hit_rate_limit: bool = False  # signals the caller to adapt (skip retries on subsequent calls)
+    hit_rate_limit: bool = False
+
+    # Structured scoring fields
+    role_match: int = 0
+    experience_match: int = 0
+    technical_match: int = 0
+    project_match: int = 0
+    education_match: int = 0
+    location_match: int = 0
+    company_quality: int = 0
+
+    decision: str = ""
+    why: list[str] = field(default_factory=list)
+    gaps: list[str] = field(default_factory=list)
