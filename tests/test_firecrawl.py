@@ -166,6 +166,79 @@ def test_guess_company_regex_does_not_crash_on_edge_case_urls():
     assert _guess_company("React Developer at Zeta Corp", "https://x.io/1") == "Zeta Corp"
 
 
+def test_query_list_covers_all_role_location_combos_with_diverse_phrasing():
+    """FIRECRAWL_SEARCH_QUERIES should include every role x location combo
+    (not a trimmed subset) and rotate experience-level phrasing across
+    them, plus the site-targeted queries — and FIRECRAWL_MAX_QUERIES
+    should default to running all of them."""
+    expected_combo_count = len(config.FIRECRAWL_ROLE_TERMS) * len(config.FIRECRAWL_LOCATIONS)
+    role_location_queries = [
+        q for q in config.FIRECRAWL_SEARCH_QUERIES if "site:" not in q
+    ]
+    assert len(role_location_queries) == expected_combo_count
+
+    site_queries = [q for q in config.FIRECRAWL_SEARCH_QUERIES if "site:" in q]
+    assert len(site_queries) > 0
+    assert any("naukri.com" in q for q in site_queries)
+    assert any("linkedin.com" in q for q in site_queries)
+
+    # more than one distinct experience-level phrasing actually appears
+    phrasings_used = {term for term in config.FIRECRAWL_EXPERIENCE_TERMS if any(term in q for q in role_location_queries)}
+    assert len(phrasings_used) > 1
+
+    assert config.FIRECRAWL_MAX_QUERIES == len(config.FIRECRAWL_SEARCH_QUERIES)
+
+
+def test_guess_posting_date_relative_phrasing():
+    from sources.firecrawl import _guess_posting_date
+    result = _guess_posting_date("Great role. Posted 2 days ago. Apply now.")
+    assert result != ""
+    assert "posted 2 day(s) ago" in result
+
+
+def test_guess_posting_date_posted_today():
+    from sources.firecrawl import _guess_posting_date
+    from datetime import datetime
+    result = _guess_posting_date("This job was posted today by Acme.")
+    assert result == datetime.utcnow().strftime("%Y-%m-%d")
+
+
+def test_guess_posting_date_iso_date():
+    from sources.firecrawl import _guess_posting_date
+    assert _guess_posting_date("Listing date: 2026-08-01. Apply soon.") == "2026-08-01"
+
+
+def test_guess_posting_date_returns_empty_when_no_signal():
+    from sources.firecrawl import _guess_posting_date
+    assert _guess_posting_date("A generic job description with no date info.") == ""
+    assert _guess_posting_date("") == ""
+
+
+@patch("sources.firecrawl.requests.post")
+def test_extracted_listings_carry_posting_date_when_present(mock_post):
+    original_key, original_queries = config.FIRECRAWL_API_KEY, config.FIRECRAWL_SEARCH_QUERIES
+    config.FIRECRAWL_API_KEY = "fc-test"
+    config.FIRECRAWL_SEARCH_QUERIES = ["React Developer fresher Bangalore"]
+    mock_post.return_value = _mock_response({
+        "success": True,
+        "data": {
+            "web": [{
+                "url": "https://boards.greenhouse.io/acme/jobs/999",
+                "title": "React Developer at Acme",
+                "markdown": "React role, posted 1 day ago. React and Node fresher role.",
+            }]
+        },
+    })
+    try:
+        rows = FirecrawlSource().fetch_listings()
+    finally:
+        config.FIRECRAWL_API_KEY, config.FIRECRAWL_SEARCH_QUERIES = original_key, original_queries
+
+    assert len(rows) == 1
+    assert rows[0].posting_date != ""
+    assert "1 day(s) ago" in rows[0].posting_date
+
+
 @patch("sources.firecrawl.requests.post")
 def test_api_key_never_appears_in_logs(mock_post, caplog):
     """The real key value must never end up in a log line — it should

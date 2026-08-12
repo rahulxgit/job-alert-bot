@@ -548,12 +548,13 @@ of its current API reference) has no cursor/offset pagination — `limit`
 is capped at 100 results per call, full stop. So breadth here comes from
 running many distinct queries (`FIRECRAWL_MAX_QUERIES`), not from paging
 a single query. `config.py` builds one query per role x location
-combination (currently 11 roles x 3 locations = 33 possible queries,
-trimmed to `FIRECRAWL_MAX_QUERIES` per run), which is the actual lever
-for widening discovery — raise `FIRECRAWL_MAX_QUERIES` or add more
-roles/locations to `FIRECRAWL_ROLE_TERMS`/`FIRECRAWL_LOCATIONS` rather
-than looking for a pagination parameter that doesn't exist on this
-endpoint.
+combination (11 roles x 3 locations = 33 queries, each rotated across
+four experience-level phrasings — "fresher", "0-1 years experience",
+"entry level", "graduate" — so the same combo isn't asked the same way
+every time), plus 5 site-targeted queries pointed at Naukri, LinkedIn
+Jobs, Greenhouse, Lever, and Indeed via the `site:` operator. That's 38
+queries total, and `FIRECRAWL_MAX_QUERIES` defaults to running all of
+them — override it lower only if a run is bumping into the time budget.
 
 ### Enabling it
 
@@ -574,9 +575,22 @@ environment variables only if you want to change the defaults:
 | `FIRECRAWL_API_KEY` | (none) | Required to enable the source at all |
 | `FIRECRAWL_ENABLED` | `true` | Set to `false` to turn it off without removing the key |
 | `FIRECRAWL_MAX_RESULTS_PER_QUERY` | `10` | Results pulled per search query — hard-capped at 100 (Firecrawl's own `/v2/search` ceiling) |
-| `FIRECRAWL_MAX_QUERIES` | `20` | How many of the generated role/location searches actually run |
+| `FIRECRAWL_MAX_QUERIES` | `38` (all generated queries) | How many of the generated role/location/site-targeted searches actually run |
 | `FIRECRAWL_MAX_TOTAL_RESULTS` | `150` | Hard ceiling across the whole source, checked as queries run so it can stop early |
 | `FIRECRAWL_TIMEOUT` | `30` | Per-request timeout (seconds) |
+
+### Posting date (best-effort)
+
+`/v2/search` doesn't return a structured posting-date field for web
+results (only its separate "news" source type does, and this source only
+requests "web"), so `JobListing.posting_date` is filled in — when
+possible — by scanning the scraped page text for common phrasings:
+"posted N days/hours/weeks/months ago", "posted today"/"just posted", or
+a bare ISO date near the top of the page. This is best-effort text
+matching, not a guarantee; if none of those patterns show up,
+`posting_date` is just left empty, exactly as it already is for every
+other source that doesn't populate it. Nothing downstream depends on it
+being set.
 
 The actual search queries are built in `config.py` from
 `FIRECRAWL_ROLE_TERMS x FIRECRAWL_LOCATIONS` (roles like "React Developer",

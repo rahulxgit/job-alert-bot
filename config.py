@@ -133,7 +133,6 @@ REMOTEOK_KEYWORDS = [
 FIRECRAWL_API_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
 FIRECRAWL_ENABLED = os.environ.get("FIRECRAWL_ENABLED", "true").lower() != "false"
 FIRECRAWL_MAX_RESULTS_PER_QUERY = min(int(os.environ.get("FIRECRAWL_MAX_RESULTS_PER_QUERY", "10")), 100)
-FIRECRAWL_MAX_QUERIES = int(os.environ.get("FIRECRAWL_MAX_QUERIES", "20"))
 FIRECRAWL_MAX_TOTAL_RESULTS = int(os.environ.get("FIRECRAWL_MAX_TOTAL_RESULTS", "150"))
 FIRECRAWL_TIMEOUT = int(os.environ.get("FIRECRAWL_TIMEOUT", "30"))
 
@@ -145,15 +144,47 @@ FIRECRAWL_ROLE_TERMS = [
 ]
 FIRECRAWL_LOCATIONS = ["Bangalore", "Pune", "India"]
 
+# Rotated (not cross-producted) across role x location combos so the query
+# list stays diverse in how it phrases seniority without exploding the
+# query count — 11 roles x 3 locations = 33 combos, each combo gets a
+# different experience phrasing in rotation rather than every combo
+# repeating "fresher" verbatim.
+FIRECRAWL_EXPERIENCE_TERMS = [
+    "fresher", "0-1 years experience", "entry level", "graduate",
+]
+
+_role_location_combos = [
+    (role, location) for location in FIRECRAWL_LOCATIONS for role in FIRECRAWL_ROLE_TERMS
+]
+_ROLE_LOCATION_QUERIES = [
+    f"{role} {FIRECRAWL_EXPERIENCE_TERMS[i % len(FIRECRAWL_EXPERIENCE_TERMS)]} {location}"
+    for i, (role, location) in enumerate(_role_location_combos)
+]
+
+# A handful of site-targeted queries pointed at the same tiers this source
+# already prioritizes in FIRECRAWL_PRIORITY_DOMAINS (Naukri, company
+# career pages, LinkedIn) — these use Firecrawl's supported `site:` query
+# operator to bias discovery toward the platforms most likely to have
+# real, current fresher-eligible postings, on top of the broader
+# role/location sweep above.
+_SITE_TARGETED_QUERIES = [
+    "software engineer fresher India site:naukri.com",
+    "full stack developer fresher India site:linkedin.com/jobs",
+    "software engineer entry level India site:boards.greenhouse.io",
+    "frontend developer fresher India site:jobs.lever.co",
+    "graduate software engineer India site:indeed.com",
+]
+
 # Built as one combined list at import time rather than nested loops
 # scattered through the source module — easier to read, easier to trim.
 # Capped by FIRECRAWL_MAX_QUERIES at call time, not here, so this list can
 # stay expressive without needing to hand-count it.
-FIRECRAWL_SEARCH_QUERIES = [
-    f"{role} fresher {location}"
-    for location in FIRECRAWL_LOCATIONS
-    for role in FIRECRAWL_ROLE_TERMS
-]
+FIRECRAWL_SEARCH_QUERIES = _ROLE_LOCATION_QUERIES + _SITE_TARGETED_QUERIES
+
+# Defaults to running every generated query above (currently 38) rather
+# than an arbitrary smaller number — override via env var to trim the
+# run shorter if the Actions time budget ever gets tight.
+FIRECRAWL_MAX_QUERIES = int(os.environ.get("FIRECRAWL_MAX_QUERIES", str(len(FIRECRAWL_SEARCH_QUERIES))))
 
 # Domains Firecrawl results are scored/ordered by, tier 1 first — used only
 # to sort which queries' results get scraped first if a run is trimmed down

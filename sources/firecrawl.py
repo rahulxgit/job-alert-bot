@@ -41,6 +41,7 @@ stop early instead of always using its full query budget).
 """
 import re
 import time
+from datetime import datetime, timedelta
 import requests
 
 import config
@@ -113,6 +114,44 @@ def _guess_location(text: str) -> str:
         if loc.lower() in text_lower:
             return loc
     return "India"
+
+
+# Firecrawl's /v2/search response has no structured posting-date field for
+# web results (only the "news" source type carries one, and this source
+# only requests "web") — so this is a best-effort text scan over the
+# scraped page content for common phrasings job boards use. Never
+# authoritative, never blocks anything if it comes up empty; the AI
+# reviewer doesn't depend on this field being populated.
+_RELATIVE_POSTED_RE = re.compile(r"posted\s+(\d+)\s*\+?\s*(hour|day|week|month)s?\s+ago", re.IGNORECASE)
+_POSTED_TODAY_RE = re.compile(r"\bposted\s+today\b|\bjust\s+posted\b", re.IGNORECASE)
+_ISO_DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
+
+_UNIT_TO_TIMEDELTA = {
+    "hour": lambda n: timedelta(hours=n),
+    "day": lambda n: timedelta(days=n),
+    "week": lambda n: timedelta(weeks=n),
+    "month": lambda n: timedelta(days=n * 30),
+}
+
+
+def _guess_posting_date(text: str) -> str:
+    if not text:
+        return ""
+
+    if _POSTED_TODAY_RE.search(text):
+        return datetime.utcnow().strftime("%Y-%m-%d")
+
+    m = _RELATIVE_POSTED_RE.search(text)
+    if m:
+        amount, unit = int(m.group(1)), m.group(2).lower()
+        approx_date = datetime.utcnow() - _UNIT_TO_TIMEDELTA[unit](amount)
+        return f"{approx_date.strftime('%Y-%m-%d')} (approx, from 'posted {amount} {unit}(s) ago')"
+
+    m = _ISO_DATE_RE.search(text)
+    if m:
+        return m.group(1)
+
+    return ""
 
 
 def _search_one_query(query: str, limit: int) -> list:
@@ -209,6 +248,7 @@ class FirecrawlSource(JobSource):
                     location=_guess_location(f"{title} {description[:500]}"),
                     description=description[:4000],
                     source=self.name,
+                    posting_date=_guess_posting_date(description[:1500]),
                 ))
 
                 if len(rows) >= config.FIRECRAWL_MAX_TOTAL_RESULTS:
