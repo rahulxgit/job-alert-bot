@@ -6,6 +6,7 @@ multiple providers internally, so transient failures should fall back to
 Gemini rather than aborting the run.
 """
 import time
+
 import requests
 
 import config
@@ -20,9 +21,16 @@ log = get_logger("gateway")
 class GatewayProvider(AIProvider):
     name = "AI Gateway"
 
-    def evaluate(self, prompt: str, max_retries: int = 1) -> FitVerdict | None:
-        """Return a normalized verdict, or None so the caller can use Gemini."""
-        for attempt in range(max_retries + 1):
+    def evaluate(self, prompt: str, max_retries: int | None = None) -> FitVerdict | None:
+        """Return a normalized verdict, or None so the caller can use Gemini.
+
+        Gateway failures are deliberately classified as recoverable provider
+        failures. The timeout/retry budget is kept short so a degraded gateway
+        cannot consume the entire daily job-search window.
+        """
+        retries = config.AI_GATEWAY_MAX_RETRIES if max_retries is None else max(0, max_retries)
+
+        for attempt in range(retries + 1):
             try:
                 resp = requests.post(
                     f"{config.AI_GATEWAY_URL}/chat",
@@ -31,16 +39,31 @@ class GatewayProvider(AIProvider):
                         "messages": [{"role": "user", "content": prompt}],
                         "taskType": "reasoning",
                     },
-                    timeout=45,
+                    timeout=config.AI_GATEWAY_TIMEOUT_SECONDS,
                 )
+
+                # Retry only transient upstream/server failures. Client-side
+                # errors and quota/auth failures should fail fast to Gemini.
+                if 400 <= resp.status_code < 500:
+                    log.warning(
+                        "gateway rejected request with HTTP %s; falling back to Gemini",
+                        resp.status_code,
+                    )
+                    return None
+
                 resp.raise_for_status()
 
                 payload = resp.json()
-                content = payload.get("content", "") if isinstance(payload, dict) else ""
+                if not isinstance(payload, dict):
+                    raise ValueError("gateway response root was not an object")
+
+                content = payload.get("content", "")
                 if isinstance(content, dict):
                     parsed = content
+                elif isinstance(content, str) and content.strip():
+                    parsed = parse_json_object(content)
                 else:
-                    parsed = parse_json_object(str(content))
+                    raise ValueError("gateway response contained empty content")
 
                 why = as_str_list(parsed.get("why"))
                 gaps = as_str_list(parsed.get("gaps"))
@@ -60,19 +83,25 @@ class GatewayProvider(AIProvider):
                     why=why,
                     gaps=gaps,
                 )
-            except (requests.RequestException, ValueError, TypeError, KeyError) as exc:
-                if attempt < max_retries:
+            except requests.RequestException as exc:
+                if attempt < retries:
                     log.warning(
-                        "gateway call failed (attempt %s/%s): %s — retrying in 3s",
+                        "gateway transient failure (attempt %s/%s): %s — retrying in %.1fs",
                         attempt + 1,
-                        max_retries + 1,
+                        retries + 1,
                         exc,
+                        config.AI_GATEWAY_RETRY_DELAY_SECONDS,
                     )
-                    time.sleep(3)
-                else:
-                    log.warning(
-                        "gateway failed after %s attempts: %s — falling back to Gemini",
-                        max_retries + 1,
-                        exc,
-                    )
+                    time.sleep(config.AI_GATEWAY_RETRY_DELAY_SECONDS)
+                    continue
+                log.warning(
+                    "gateway unavailable after %s attempts: %s — falling back to Gemini",
+                    retries + 1,
+                    exc,
+                )
+                return None
+            except (ValueError, TypeError, KeyError) as exc:
+                log.warning("gateway response invalid: %s — falling back to Gemini", exc)
+                return None
+
         return None
