@@ -308,7 +308,7 @@ def _save_failed_ai_jobs(jobs: list[JobListing]) -> None:
 
 
 def _load_ai_progress() -> dict:
-    path = Path("run-artifacts/ai-progress.json")
+    path = AI_PROGRESS_PATH
     if not path.exists():
         return {}
     try:
@@ -324,7 +324,7 @@ def _load_ai_progress() -> dict:
 
 
 def _save_ai_progress(progress: dict) -> None:
-    path = Path("run-artifacts/ai-progress.json")
+    path = AI_PROGRESS_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     progress["version"] = AI_PROGRESS_VERSION
     progress["updated_at"] = datetime.now(timezone.utc).isoformat()
