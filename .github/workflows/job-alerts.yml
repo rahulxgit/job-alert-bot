@@ -4,11 +4,11 @@ on:
   schedule:
     # 8:00 AM IST = 2:30 AM UTC
     - cron: "30 2 * * *"
-  workflow_dispatch: {}  # lets me trigger it manually from the Actions tab
+  workflow_dispatch: {}
 
 concurrency:
   group: daily-job-alert
-  cancel-in-progress: false  # let an in-progress run finish rather than duplicating writes
+  cancel-in-progress: false
 
 jobs:
   run-job-search:
@@ -23,9 +23,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Install Crawl4AI browser
+        run: crawl4ai-setup
 
       - name: Run job search script
         env:
@@ -42,4 +46,11 @@ jobs:
           AI_GATEWAY_URL: ${{ secrets.AI_GATEWAY_URL }}
           APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
           FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
+          # Safe runtime defaults; override in repository variables if needed.
+          JOBSPY_MAX_COMBINATIONS: "24"
+          JOBSPY_RESULTS_PER_SITE: "15"
+          JOBSPY_CALL_TIMEOUT_SECONDS: "60"
+          CRAWL_PROVIDER: "auto"
+          CRAWL4AI_TIMEOUT: "30"
+          CRAWL4AI_MAX_DETAIL_PAGES: "25"
         run: python -u main.py
