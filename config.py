@@ -140,8 +140,7 @@ FRESHER_SIGNALS = ["sde 1", "sde-1", "sde i", "software development engineer i",
 SENIORITY_EXCLUSIONS = ["senior", "sr.", "sr ", "staff", "principal", "lead", "architect", "manager", "director", "head of", "vp ", "9-12 yr", "6-9 yr", "5-8 yr", "8+ year", "10+ year", "7+ year", "6+ year", "5+ year", "4+ year"]
 PRIORITY_COMPANIES = ["razorpay", "sarvam", "groww", "meesho", "zepto", "cred", "swiggy", "zomato", "flipkart", "postman", "browserstack", "freshworks"]
 
-# Phase 1A: keep the broad 300-candidate AI pool. Precision is handled by the
-# staged pre-filter below rather than by discarding coverage at the top.
+# Keep the broad AI candidate pool; precision is enforced before the LLM stage.
 MAX_LLM_CANDIDATES = int(os.environ.get("MAX_LLM_CANDIDATES", "300"))
 LLM_FIT_THRESHOLD = 70
 MIN_LIGHTWEIGHT_SCORE = int(os.environ.get("MIN_LIGHTWEIGHT_SCORE", "6"))
@@ -185,6 +184,10 @@ EDUCATION_OPEN_SIGNALS = [
     "technology or engineering", "computer science or related field",
 ]
 FRESHNESS_DAYS = int(os.environ.get("PREFILTER_FRESHNESS_DAYS", "30"))
+
+# Compatibility ceiling for the existing main.py call path. The scheduled
+# workflow is limited to 55 minutes, so this does not reduce search coverage.
+LLM_EVALUATION_BUDGET_SECONDS = int(os.environ.get("LLM_EVALUATION_BUDGET_SECONDS", "86400"))
 
 # --- AI providers -----------------------------------------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
