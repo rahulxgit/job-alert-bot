@@ -15,8 +15,7 @@ from utils.logging_setup import get_logger
 
 log = get_logger("jobspy")
 
-_cached_df = None  # simple process-level cache — linkedin/google sources
-                    # each need this data but must not trigger 3x the real scraping
+_cached_df = None
 
 
 def _scrape_one_combo(term: str, location: str):
@@ -32,24 +31,50 @@ def _scrape_one_combo(term: str, location: str):
 
 
 def fetch_all_jobspy_listings() -> pd.DataFrame:
-    """Returns a combined DataFrame with a 'source' column (Linkedin/
-    Google) so each thin wrapper source can filter to just its own rows.
-    Cached at module level — linkedin.py and google.py each
-    call this independently, but only the first call does real work."""
+    """Fetch a bounded set of JobSpy term/location combinations once.
+
+    The old implementation expanded every search term against every location
+    on every run. With 22 terms x 2 locations, one run could issue 44 JobSpy
+    calls before downstream processing. JOBSPY_MAX_COMBINATIONS provides a
+    hard execution budget while keeping the search terms/location order
+    configurable. The result is still cached so LinkedIn and Google sources
+    never trigger a second scrape in the same process.
+    """
     global _cached_df
     if _cached_df is not None:
         return _cached_df
 
     all_results = []
+    max_combinations = max(1, int(config.JOBSPY_MAX_COMBINATIONS))
+    combinations_run = 0
+
     for term in config.SEARCH_TERMS:
         for location in config.LOCATIONS:
+            if combinations_run >= max_combinations:
+                log.info(
+                    "[JobSpy] Combination budget reached: %s/%s; stopping cleanly",
+                    combinations_run,
+                    max_combinations,
+                )
+                break
+
+            combinations_run += 1
             df = run_with_timeout(
-                _scrape_one_combo, args=(term, location),
+                _scrape_one_combo,
+                args=(term, location),
                 timeout_seconds=config.JOBSPY_CALL_TIMEOUT_SECONDS,
                 label=f"jobspy '{term}' in '{location}'",
             )
             if df is not None and not df.empty:
                 all_results.append(df)
+        if combinations_run >= max_combinations:
+            break
+
+    log.info(
+        "[JobSpy] Completed %s bounded combinations (budget=%s)",
+        combinations_run,
+        max_combinations,
+    )
 
     if not all_results:
         _cached_df = pd.DataFrame()

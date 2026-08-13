@@ -2,13 +2,9 @@ import argparse
 """
 Daily job alert bot — entry point.
 
-Pipeline: fetch from 10 independent sources (each isolated — one failing
-never blocks the others) -> dedupe -> keyword pre-filter -> AI review
-(Gemini, falling back to a self-hosted gateway) -> recruiter-email
-enrichment -> sort (contactable jobs first) -> log to Sheet -> email digest.
-
-Run manually with: python -u main.py
-Runs automatically daily via .github/workflows/job-alerts.yml
+Pipeline: fetch from independent sources -> dedupe -> keyword pre-filter ->
+fill missing/short job descriptions with Crawl4AI (Firecrawl fallback when
+configured) -> AI review -> recruiter-email enrichment -> sort -> Sheet/email.
 """
 import pandas as pd
 
@@ -27,6 +23,7 @@ from sources.linkedin_posts import LinkedInPostsSource
 from sources.arbeitnow import ArbeitnowSource
 from sources.remoteok import RemoteOKSource
 from sources.firecrawl import FirecrawlSource
+from sources.generic_crawler import crawl_url
 from ai.evaluator import prefilter, review_candidates
 from enrichment.recruiter_email import enrich_with_emails
 from sheets.google_sheets import get_sheet, get_seen_urls, log_new_jobs
@@ -35,9 +32,6 @@ from mailer.digest import build_email_body
 
 log = get_logger("main")
 
-# Every source here is independent — this list is the only place that
-# needs editing to add/remove a source. Order doesn't matter functionally,
-# only for log readability.
 ALL_SOURCES = [
     LinkedInSource(), GoogleJobsSource(),
     InternshalaSource(), NaukriSource(), WellfoundSource(),
@@ -47,8 +41,7 @@ ALL_SOURCES = [
 
 
 def fetch_all() -> tuple:
-    """Runs every source, isolating failures so one broken source can
-    never take down the rest. Returns (all_listings, source_counts)."""
+    """Run every source independently so one failure never blocks the others."""
     all_listings: list[JobListing] = []
     source_counts: dict = {}
 
@@ -65,19 +58,14 @@ def fetch_all() -> tuple:
     return all_listings, source_counts
 
 
-
 def _normalize_url(url: str) -> str:
-    """Strips common tracking params so the same job found via two
-    different query strings still dedupes cleanly."""
     if not url or "?" not in url:
         return url
     base, _, query = url.partition("?")
-    TRACKING_PARAM_PREFIXES = ("utm_", "ref", "src", "trk", "gclid", "fbclid")
-    kept = [
-        pair for pair in query.split("&")
-        if pair and not pair.split("=")[0].lower().startswith(TRACKING_PARAM_PREFIXES)
-    ]
+    tracking = ("utm_", "ref", "src", "trk", "gclid", "fbclid")
+    kept = [pair for pair in query.split("&") if pair and not pair.split("=")[0].lower().startswith(tracking)]
     return f"{base}?{'&'.join(kept)}" if kept else base
+
 
 def dedupe(listings: list[JobListing]) -> list[JobListing]:
     seen, unique = set(), []
@@ -85,11 +73,9 @@ def dedupe(listings: list[JobListing]) -> list[JobListing]:
         norm_url = _normalize_url(listing.job_url)
         if norm_url and norm_url not in seen:
             seen.add(norm_url)
-            # Retain normalized url in the listing to avoid downstream duplication
             listing.job_url = norm_url
             unique.append(listing)
     return unique
-
 
 
 def _source_breakdown(listings: list[JobListing]) -> dict:
@@ -99,12 +85,57 @@ def _source_breakdown(listings: list[JobListing]) -> dict:
     return counts
 
 
+def _enrich_descriptions_with_crawl4ai(listings: list[JobListing]) -> list[JobListing]:
+    """Fill only missing/short descriptions with bounded generic crawling.
+
+    Crawl4AI is deliberately not used for every listing: JobSpy and the
+    dedicated sources already return descriptions for most jobs. This keeps
+    browser work bounded while making Crawl4AI the default generic scraper.
+    In ``auto`` mode, generic_crawler falls back to Firecrawl if available.
+    """
+    max_pages = max(0, int(config.CRAWL4AI_MAX_DETAIL_PAGES))
+    min_chars = max(0, int(config.CRAWL4AI_MIN_DESCRIPTION_CHARS))
+    candidates = [
+        listing for listing in listings
+        if listing.job_url and len((listing.description or "").strip()) < min_chars
+    ][:max_pages]
+
+    if not candidates:
+        return listings
+
+    log.info(
+        "[Crawl4AI] Enriching %s/%s listings with bounded generic crawling",
+        len(candidates),
+        len(listings),
+    )
+    for listing in candidates:
+        try:
+            enriched = crawl_url(
+                listing.job_url,
+                title=listing.title,
+                company=listing.company,
+                location=listing.location,
+            )
+            if enriched and len((enriched.description or "").strip()) > len((listing.description or "").strip()):
+                listing.description = enriched.description
+                if not listing.company:
+                    listing.company = enriched.company
+                if not listing.location:
+                    listing.location = enriched.location
+                log.info("[Crawl4AI] Enriched: %s", listing.job_url)
+        except Exception as exc:
+            log.warning("[Crawl4AI] Enrichment failed for %s: %s", listing.job_url, exc)
+    return listings
+
+
 def run_pipeline(dry_run: bool = False):
     log.info("Fetching from all sources...")
     all_listings, source_counts = fetch_all()
     all_listings = dedupe(all_listings)
     log.info(f"Pulled {len(all_listings)} raw listings total")
     log.info(f"  by source: {source_counts}")
+
+    all_listings = _enrich_descriptions_with_crawl4ai(all_listings)
 
     shortlist = prefilter(all_listings)
     log.info(f"{len(shortlist)} passed the keyword pre-filter (sent for AI review)")
@@ -131,9 +162,6 @@ def run_pipeline(dry_run: bool = False):
     log.info(f"{len(reviewed)} passed AI fit review (score >= {config.LLM_FIT_THRESHOLD})")
     log.info(f"  by source: {_source_breakdown(reviewed)}")
 
-    # Defensive re-check right before writing — insurance against an
-    # overlapping run (the workflow's concurrency guard should prevent
-    # this, but this is cheap and catches any edge case it misses).
     reviewed_urls = {l.job_url for l in reviewed}
     if len(reviewed_urls) != len(reviewed):
         seen_dedup, deduped = set(), []
@@ -150,9 +178,6 @@ def run_pipeline(dry_run: bool = False):
     found_count = sum(1 for l in reviewed if l.recruiter_email)
     log.info(f"  found an email for {found_count}/{len(reviewed)} jobs")
 
-    # Prioritize outreach-ready jobs: contactable first, fit score breaks
-    # ties. Fit is still the quality gate — this only reorders what
-    # already passed review.
     reviewed.sort(key=lambda l: (bool(l.recruiter_email), l.fit_score), reverse=True)
 
     if not dry_run: log_new_jobs(sheet, reviewed)
