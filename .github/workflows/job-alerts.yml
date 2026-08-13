@@ -28,6 +28,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Restore latest AI checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p run-artifacts
+          artifact_id="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=ai-checkpoint&per_page=20" --jq '.artifacts | map(select(.expired == false)) | sort_by(.created_at) | reverse | .[0].id // empty')"
+          if [ -z "${artifact_id}" ]; then
+            echo "No previous AI checkpoint artifact found."
+            exit 0
+          fi
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > /tmp/ai-checkpoint.zip
+          unzip -o /tmp/ai-checkpoint.zip -d run-artifacts >/dev/null
+          echo "Restored AI checkpoint artifact ${artifact_id}."
+
       - name: Restore AI retry queue
         uses: actions/cache@v4
         with:
@@ -63,6 +79,15 @@ jobs:
           CRAWL4AI_TIMEOUT: "30"
           CRAWL4AI_MAX_DETAIL_PAGES: "25"
         run: python -u main.py
+
+      - name: Upload AI checkpoint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-checkpoint
+          path: run-artifacts/ai-progress.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload job run artifacts
         if: always()
