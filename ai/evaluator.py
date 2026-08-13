@@ -14,6 +14,8 @@ log = get_logger("evaluator")
 _gemini = GeminiProvider()
 _gateway = GatewayProvider()
 _candidate_profile = None
+_gateway_disabled_until = 0.0
+_gemini_disabled_until = 0.0
 
 
 def _profile() -> str:
@@ -213,8 +215,6 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     description_role_hits = _contains_any(description, config.ROLE_MATCH_TERMS)
     core_tech_hits = _contains_any(full_text, config.CORE_TECH_TERMS)
 
-    # A broad keyword hit is not enough. A candidate must show a plausible
-    # target role, or multiple directly relevant technologies, before AI.
     if not role_hits and len(core_tech_hits) < 2:
         return 0
 
@@ -288,13 +288,31 @@ def prefilter(listings: list[JobListing]) -> list[JobListing]:
 
 
 def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> tuple:
+    global _gateway_disabled_until, _gemini_disabled_until
+
     prompt = _build_prompt(listing)
-    verdict = _gateway.evaluate(prompt)
-    if verdict is not None:
-        return verdict, False
-    log.warning("gateway failed for '%s' — falling back to Gemini", listing.title)
+    now = time.monotonic()
+
+    if now < _gateway_disabled_until:
+        log.info("AI Gateway circuit open; skipping gateway for '%s'", listing.title)
+    else:
+        verdict = _gateway.evaluate(prompt)
+        if verdict is not None:
+            return verdict, False
+        _gateway_disabled_until = time.monotonic() + config.AI_GATEWAY_RETRY_DELAY_SECONDS
+        log.warning("gateway unavailable for '%s' — opening short gateway circuit and falling back", listing.title)
+
+    if time.monotonic() < _gemini_disabled_until:
+        return FitVerdict(reason="all LLM providers unavailable — not evaluated"), False
+
+    log.warning("falling back to Gemini for '%s'", listing.title)
     gemini_verdict = _gemini.evaluate(prompt, skip_retries=skip_gemini_retries)
     if gemini_verdict.hit_rate_limit:
+        _gemini_disabled_until = time.monotonic() + config.GEMINI_QUOTA_COOLDOWN_SECONDS
+        log.warning(
+            "Gemini rate limit confirmed; opening Gemini circuit for %ss",
+            config.GEMINI_QUOTA_COOLDOWN_SECONDS,
+        )
         return gemini_verdict, True
     if gemini_verdict.reason == "evaluation failed":
         return FitVerdict(reason="all LLM providers failed — not evaluated"), False
@@ -302,17 +320,12 @@ def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> 
 
 
 def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
-    """Review up to the configured candidate pool.
-
-    ``deadline`` is retained for backward compatibility with the earlier Phase 1
-    call path, but the short 20-minute cutoff is intentionally disabled so it
-    cannot reduce job coverage. The GitHub Actions job timeout remains the final
-    external safety boundary until runtime optimization is addressed separately.
-    """
+    """Review up to the configured candidate pool without a short artificial deadline."""
     _ = deadline
     passed = []
     consecutive_failures = 0
     gemini_confirmed_exhausted = False
+
     for listing in listings[: config.MAX_LLM_CANDIDATES]:
         verdict, gemini_hit_rate_limit = evaluate_listing(
             listing,
@@ -378,9 +391,6 @@ def review_candidates(listings: list[JobListing], deadline: float | None = None)
 
         if listing.fit_score >= config.LLM_FIT_THRESHOLD and listing.fresher_appropriate:
             passed.append(listing)
-
-        if gemini_hit_rate_limit and not gemini_confirmed_exhausted:
-            time.sleep(4.5)
 
     passed.sort(key=lambda l: l.fit_score, reverse=True)
     return passed
