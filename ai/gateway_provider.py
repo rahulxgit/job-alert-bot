@@ -42,12 +42,15 @@ class GatewayProvider(AIProvider):
                     timeout=config.AI_GATEWAY_TIMEOUT_SECONDS,
                 )
 
-                # Retry only transient upstream/server failures. Client-side
-                # errors and quota/auth failures should fail fast to Gemini.
-                if 400 <= resp.status_code < 500:
+                # ``Mock`` objects used by unit tests (and lightweight test
+                # doubles) may not provide ``status_code``. Only classify HTTP
+                # status ranges when an actual integer status is available;
+                # otherwise let raise_for_status()/JSON parsing decide.
+                status_code = getattr(resp, "status_code", None)
+                if isinstance(status_code, int) and 400 <= status_code < 500:
                     log.warning(
                         "gateway rejected request with HTTP %s; falling back to Gemini",
-                        resp.status_code,
+                        status_code,
                     )
                     return None
 
