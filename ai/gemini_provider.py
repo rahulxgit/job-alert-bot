@@ -1,10 +1,11 @@
 """Fallback AI provider — Gemini free tier.
 
-Uses Gemini's structured JSON output mode plus defensive parsing. Retries
-429s when useful, but malformed provider output is treated as a failed
-candidate evaluation rather than a fatal workflow error.
+Uses Gemini's structured JSON output mode plus defensive parsing. Retry
+budget is deliberately short so provider quota/errors cannot consume the
+entire daily job-search window.
 """
 import time
+
 import requests
 
 import config
@@ -20,8 +21,8 @@ class GeminiProvider(AIProvider):
     name = "Gemini"
 
     def evaluate(self, prompt: str, skip_retries: bool = False) -> FitVerdict:
-        max_retries = 0 if skip_retries else 3
-        backoff_seconds = 15
+        max_retries = 0 if skip_retries else config.GEMINI_MAX_RETRIES
+        backoff_seconds = config.GEMINI_MAX_RETRY_WAIT_SECONDS
 
         response_schema = {
             "type": "OBJECT",
@@ -63,11 +64,20 @@ class GeminiProvider(AIProvider):
                             "responseSchema": response_schema,
                         },
                     },
-                    timeout=30,
+                    timeout=config.GEMINI_TIMEOUT_SECONDS,
                 )
+
                 if resp.status_code == 429:
-                    if attempt < max_retries:
-                        wait = int(resp.headers.get("Retry-After", backoff_seconds * (attempt + 1)))
+                    retry_after_raw = resp.headers.get("Retry-After", "")
+                    try:
+                        retry_after = int(retry_after_raw)
+                    except (TypeError, ValueError):
+                        retry_after = backoff_seconds * (attempt + 1)
+
+                    # Never let server-provided Retry-After turn one candidate
+                    # into a multi-minute blocking operation.
+                    wait = min(max(retry_after, 0), config.GEMINI_MAX_RETRY_WAIT_SECONDS)
+                    if attempt < max_retries and wait > 0:
                         log.warning(
                             "rate limited — retrying in %ss (attempt %s/%s)",
                             wait,
@@ -77,6 +87,11 @@ class GeminiProvider(AIProvider):
                         time.sleep(wait)
                         continue
                     return FitVerdict(hit_rate_limit=True, reason="rate limited")
+
+                # Do not retry permanent client/auth errors.
+                if 400 <= resp.status_code < 500:
+                    log.warning("Gemini rejected request with HTTP %s", resp.status_code)
+                    return FitVerdict(reason=f"Gemini HTTP {resp.status_code}", hit_rate_limit=False)
 
                 resp.raise_for_status()
                 payload = resp.json()
