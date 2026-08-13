@@ -140,7 +140,7 @@ PROFILE_KEYWORDS = [
 FRESHER_SIGNALS = ["sde 1", "sde-1", "sde i", "software development engineer i", "fresher", "0-1 year", "0-2 year", "0 - 2 year", "0-2 yrs", "entry level", "entry-level", "graduate engineer", "graduate trainee", "junior", "campus hire", "new grad", "intern"]
 SENIORITY_EXCLUSIONS = ["senior", "sr.", "sr ", "staff", "principal", "lead", "architect", "manager", "director", "head of", "vp ", "9-12 yr", "6-9 yr", "5-8 yr", "8+ year", "10+ year", "7+ year", "6+ year", "5+ year", "4+ year"]
 PRIORITY_COMPANIES = ["razorpay", "sarvam", "groww", "meesho", "zepto", "cred", "swiggy", "zomato", "flipkart", "postman", "browserstack", "freshworks"]
-MAX_LLM_CANDIDATES = 300
+MAX_LLM_CANDIDATES = int(os.environ.get("MAX_LLM_CANDIDATES", "100"))
 LLM_FIT_THRESHOLD = 70
 MIN_LIGHTWEIGHT_SCORE = 3
 CONSECUTIVE_RATE_LIMIT_BREAKER = 5
@@ -150,6 +150,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash-lite"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 AI_GATEWAY_URL = os.environ.get("AI_GATEWAY_URL") or "https://ai-gateway-wx35.onrender.com"
+LLM_EVALUATION_BUDGET_SECONDS = int(os.environ.get("LLM_EVALUATION_BUDGET_SECONDS", "1200"))
 
 # --- Recruiter email enrichment ---------------------------------------------
 HUNTER_API_KEY = os.environ.get("HUNTER_API_KEY", "")
@@ -172,4 +173,4 @@ _REQUIRED_FOR_REAL_RUN = ["GEMINI_API_KEY", "GOOGLE_SHEET_ID", "GOOGLE_SERVICE_A
 def validate():
     missing = [name for name in _REQUIRED_FOR_REAL_RUN if not globals().get(name)]
     if missing:
-        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+        raise RuntimeError(", ".join(missing))
