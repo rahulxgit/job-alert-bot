@@ -46,7 +46,9 @@ jobs:
           AI_GATEWAY_URL: ${{ secrets.AI_GATEWAY_URL }}
           APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
           FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
-          # Safe runtime defaults; override in repository variables if needed.
+          # Keep Firecrawl code available but do not spend credits on the
+          # scheduled run. Set this to "true" when credits are available.
+          FIRECRAWL_ENABLED: "false"
           JOBSPY_MAX_COMBINATIONS: "24"
           JOBSPY_RESULTS_PER_SITE: "15"
           JOBSPY_CALL_TIMEOUT_SECONDS: "60"
