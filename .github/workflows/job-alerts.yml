@@ -13,7 +13,7 @@ concurrency:
 jobs:
   run-job-search:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 180
 
     steps:
       - name: Checkout repo
@@ -27,6 +27,14 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Restore AI retry queue
+        uses: actions/cache@v4
+        with:
+          path: failed-ai-jobs.json
+          key: failed-ai-jobs-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            failed-ai-jobs-
 
       - name: Install Crawl4AI browser
         run: crawl4ai-setup
@@ -46,10 +54,7 @@ jobs:
           AI_GATEWAY_URL: ${{ secrets.AI_GATEWAY_URL }}
           APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
           FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
-          # Keep Firecrawl code available but do not spend credits on the
-          # scheduled run. Set this to "true" when credits are available.
           FIRECRAWL_ENABLED: "false"
-          # Permanently enable bounded Crawl4AI deep job discovery.
           CRAWL4AI_DISCOVERY_ENABLED: "true"
           JOBSPY_MAX_COMBINATIONS: "24"
           JOBSPY_RESULTS_PER_SITE: "15"

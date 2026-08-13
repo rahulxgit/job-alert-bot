@@ -1,7 +1,11 @@
+import json
 import re
-"""Job-fit evaluation driven by the canonical master profile."""
 import time
+from dataclasses import fields
 from datetime import datetime, timezone
+from pathlib import Path
+
+"""Job-fit evaluation driven by the canonical master profile."""
 
 import config
 from models import FitVerdict, JobListing
@@ -14,6 +18,10 @@ log = get_logger("evaluator")
 _gemini = GeminiProvider()
 _gateway = GatewayProvider()
 _candidate_profile = None
+FAILED_AI_JOBS_PATH = Path("failed-ai-jobs.json")
+AI_MAX_ATTEMPTS_PER_CANDIDATE = max(1, int(getattr(config, "AI_EVALUATION_MAX_ATTEMPTS_PER_CANDIDATE", 3)))
+AI_RETRY_DELAY_SECONDS = max(1.0, float(getattr(config, "AI_EVALUATION_RETRY_DELAY_SECONDS", 15)))
+AI_MAX_RETRY_DELAY_SECONDS = max(AI_RETRY_DELAY_SECONDS, float(getattr(config, "AI_EVALUATION_MAX_RETRY_DELAY_SECONDS", 60)))
 
 
 def _profile() -> str:
@@ -56,7 +64,6 @@ EVALUATION INSTRUCTIONS
 - Leadership, achievements, and CP data can improve fit when relevant but cannot override hard eligibility failures.
 - Location fit must use the profile's actual preferences; do not invent relocation willingness.
 - Company/industry preferences are a modest factor, not a standalone rejection reason.
-- Application/cover-letter/motivation context can support alignment only when those facts exist in the profile.
 - If a material requirement cannot be verified, say so in gaps instead of assuming it.
 - Reasons and gaps must mention specific candidate/JD evidence.
 
@@ -102,36 +109,18 @@ All numeric fields are integers. why and gaps are arrays of strings.
 
 def _parse_experience(text: str) -> dict:
     text_lower = text.lower()
-    res = {
-        "min_years": 0,
-        "max_years": 0,
-        "required": False,
-        "preferred": False,
-        "graduate_friendly": False,
-        "eligible_for_rahul": True,
-        "reason": "",
-    }
+    res = {"min_years": 0, "max_years": 0, "required": False, "preferred": False, "graduate_friendly": False, "eligible_for_rahul": True, "reason": ""}
     graduate_signals = [
-        "new grad", "fresher", "0-1 years", "0-1 yrs", "0-1 yr", "0 to 1",
-        "0-2 years", "0-2 yrs", "0-2 yr", "0 to 2", "0 - 2", "0 – 2", "0–1",
-        "0–2", "up to 1 year", "1 year experience", "1+ years", "final-year",
-        "2026 graduate", "graduate", "entry level", "entry-level",
+        "new grad", "fresher", "0-1 years", "0-1 yrs", "0-1 yr", "0 to 1", "0-2 years", "0-2 yrs", "0-2 yr", "0 to 2", "0 - 2", "0 – 2", "0–1", "0–2", "up to 1 year", "1 year experience", "1+ years", "final-year", "2026 graduate", "graduate", "entry level", "entry-level",
     ]
     if any(sig in text_lower for sig in graduate_signals):
         res["graduate_friendly"] = True
 
-    req_match = re.search(
-        r"\b([2-9]|1[0-9])\+?\s*(?:\+|to|-|–|\s)*\s*(?:years?|yrs?)\s*(?:of\s*experience)?\b",
-        text_lower,
-    )
+    req_match = re.search(r"\b([2-9]|1[0-9])\+?\s*(?:\+|to|-|–|\s)*\s*(?:years?|yrs?)\s*(?:of\s*experience)?\b", text_lower)
     if req_match:
         years = int(req_match.group(1))
         res["min_years"] = years
-        preferred_match = re.search(
-            r"\b([2-9]|1[0-9])\+?\s*(?:\+|to|-|–|\s)*\s*(?:years?|yrs?).{0,30}"
-            r"(?:preferred|a plus|nice to have|advantage|bonus)\b",
-            text_lower,
-        )
+        preferred_match = re.search(r"\b([2-9]|1[0-9])\+?\s*(?:\+|to|-|–|\s)*\s*(?:years?|yrs?).{0,30}(?:preferred|a plus|nice to have|advantage|bonus)\b", text_lower)
         if preferred_match:
             res["preferred"] = True
         else:
@@ -212,27 +201,21 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     role_hits = _contains_any(title, config.ROLE_MATCH_TERMS)
     description_role_hits = _contains_any(description, config.ROLE_MATCH_TERMS)
     core_tech_hits = _contains_any(full_text, config.CORE_TECH_TERMS)
-
-    # A broad keyword hit is not enough. A candidate must show a plausible
-    # target role, or multiple directly relevant technologies, before AI.
     if not role_hits and len(core_tech_hits) < 2:
         return 0
 
     location_points, location_hard_mismatch = _location_score(location)
     if location_hard_mismatch:
         return 0
-
     education_points, education_hard_mismatch = _education_score(f"{title} {description}")
     if education_hard_mismatch:
         return 0
-
     freshness_points, freshness_expired = _freshness_score(listing)
     if freshness_expired:
         return 0
 
     fresher_hits = _contains_any(full_text, config.FRESHER_SIGNALS)
     support_hits = _contains_any(full_text, config.PROFILE_KEYWORDS)
-
     score = 0
     score += min(len(role_hits), 3) * 5
     score += min(len(description_role_hits), 3)
@@ -246,7 +229,6 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     from utils.text import extract_email_from_text
     if extract_email_from_text(description):
         score += 1
-
     score -= seniority_hits
     return max(score, 0)
 
@@ -261,11 +243,10 @@ def prefilter(listings: list[JobListing]) -> list[JobListing]:
     by_source = {}
     for listing in scored:
         by_source.setdefault(listing.source, []).append(listing)
-
-    final_pool = []
     for src in by_source:
         by_source[src].sort(key=lambda l: l.prefilter_score, reverse=True)
 
+    final_pool = []
     min_slots = config.MIN_CANDIDATES_PER_SOURCE
     for src, src_listings in list(by_source.items()):
         final_pool.extend(src_listings[:min_slots])
@@ -277,110 +258,135 @@ def prefilter(listings: list[JobListing]) -> list[JobListing]:
         for src in list(sources_with_candidates.keys()):
             if remaining_budget <= 0:
                 break
-            src_listings = sources_with_candidates[src]
-            final_pool.append(src_listings.pop(0))
+            final_pool.append(sources_with_candidates[src].pop(0))
             remaining_budget -= 1
-            if not src_listings:
+            if not sources_with_candidates[src]:
                 del sources_with_candidates[src]
 
     final_pool.sort(key=lambda l: l.prefilter_score, reverse=True)
-    return final_pool[: config.MAX_LLM_CANDIDATES]
+    return final_pool[:config.MAX_LLM_CANDIDATES]
+
+
+def _load_failed_ai_jobs() -> list[JobListing]:
+    if not FAILED_AI_JOBS_PATH.exists():
+        return []
+    try:
+        payload = json.loads(FAILED_AI_JOBS_PATH.read_text(encoding="utf-8"))
+        jobs = payload.get("jobs", []) if isinstance(payload, dict) else payload
+        if not isinstance(jobs, list):
+            return []
+        allowed = {field.name for field in fields(JobListing)}
+        loaded = []
+        seen = set()
+        for item in jobs:
+            if not isinstance(item, dict):
+                continue
+            data = {key: value for key, value in item.items() if key in allowed}
+            url = str(data.get("job_url") or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            try:
+                loaded.append(JobListing(**data))
+            except TypeError:
+                continue
+        return loaded
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        log.warning("Could not load failed-ai-jobs.json: %s", exc)
+        return []
+
+
+def _save_failed_ai_jobs(jobs: list[JobListing]) -> None:
+    payload = {"version": 1, "updated_at": datetime.now(timezone.utc).isoformat(), "count": len(jobs), "jobs": [job.to_dict() for job in jobs]}
+    FAILED_AI_JOBS_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    Path("run-artifacts").mkdir(parents=True, exist_ok=True)
+    Path("run-artifacts/failed-ai-jobs.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info("AI retry queue persisted: %s unresolved jobs", len(jobs))
+
+
+def _apply_verdict(listing: JobListing, verdict: FitVerdict) -> bool:
+    exp_info = _parse_experience(listing.description or "")
+    if not exp_info["eligible_for_rahul"]:
+        listing.fit_score = 0
+        listing.fresher_appropriate = False
+        listing.reason = exp_info["reason"]
+        listing.fit_tier = "Reject"
+        return False
+
+    listing.role_match = max(0, min(getattr(verdict, "role_match", 0), 25))
+    listing.experience_match = max(0, min(getattr(verdict, "experience_match", 0), 20))
+    listing.technical_match = max(0, min(getattr(verdict, "technical_match", 0), 25))
+    listing.project_match = max(0, min(getattr(verdict, "project_match", 0), 10))
+    listing.education_match = max(0, min(getattr(verdict, "education_match", 0), 10))
+    listing.location_match = max(0, min(getattr(verdict, "location_match", 0), 5))
+    listing.company_quality = max(0, min(getattr(verdict, "company_quality", 0), 5))
+    listing.fit_score = sum([listing.role_match, listing.experience_match, listing.technical_match, listing.project_match, listing.education_match, listing.location_match, listing.company_quality])
+    listing.fresher_appropriate = getattr(verdict, "is_fresher_appropriate", False)
+    listing.reason = getattr(verdict, "reason", "")
+    if isinstance(getattr(verdict, "why", None), list):
+        listing.reason = "; ".join(verdict.why)
+    if isinstance(getattr(verdict, "gaps", None), list):
+        listing.gaps = verdict.gaps
+
+    if listing.fit_score >= 90:
+        listing.fit_tier = "Exceptional"
+    elif listing.fit_score >= 80:
+        listing.fit_tier = "Strong"
+    elif listing.fit_score >= 70:
+        listing.fit_tier = "Good"
+    elif listing.fit_score >= 60:
+        listing.fit_tier = "Reasonable"
+    else:
+        listing.fit_tier = "Weak"
+    return listing.fit_score >= config.LLM_FIT_THRESHOLD and listing.fresher_appropriate
 
 
 def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> tuple:
+    """Retry the same candidate a bounded number of times before queueing it."""
     prompt = _build_prompt(listing)
-    verdict = _gateway.evaluate(prompt)
-    if verdict is not None:
-        return verdict, False
-    log.warning("gateway failed for '%s' — falling back to Gemini", listing.title)
-    gemini_verdict = _gemini.evaluate(prompt, skip_retries=skip_gemini_retries)
-    if gemini_verdict.hit_rate_limit:
-        return gemini_verdict, True
-    if gemini_verdict.reason == "evaluation failed":
-        return FitVerdict(reason="all LLM providers failed — not evaluated"), False
-    return gemini_verdict, False
+    delay = AI_RETRY_DELAY_SECONDS
+
+    for attempt in range(1, AI_MAX_ATTEMPTS_PER_CANDIDATE + 1):
+        gateway_verdict = _gateway.evaluate(prompt)
+        if gateway_verdict is not None:
+            return gateway_verdict, False
+
+        log.warning("AI Gateway unavailable for '%s' on attempt %s; trying Gemini", listing.title, attempt)
+        gemini_verdict = _gemini.evaluate(prompt, skip_retries=skip_gemini_retries or attempt > 1)
+        if not gemini_verdict.hit_rate_limit and gemini_verdict.reason != "evaluation failed":
+            return gemini_verdict, False
+
+        reason = "Gemini rate limited" if gemini_verdict.hit_rate_limit else "both AI providers failed"
+        log.warning("%s for '%s' on attempt %s/%s", reason, listing.title, attempt, AI_MAX_ATTEMPTS_PER_CANDIDATE)
+        if attempt < AI_MAX_ATTEMPTS_PER_CANDIDATE:
+            time.sleep(delay)
+            delay = min(AI_MAX_RETRY_DELAY_SECONDS, max(1.0, delay * 2))
+
+    return None, True
 
 
 def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
-    """Review up to the configured candidate pool.
-
-    ``deadline`` is retained for backward compatibility with the earlier Phase 1
-    call path, but the short 20-minute cutoff is intentionally disabled so it
-    cannot reduce job coverage. The GitHub Actions job timeout remains the final
-    external safety boundary until runtime optimization is addressed separately.
-    """
+    """Review all selected jobs, retrying unresolved jobs across workflow runs."""
     _ = deadline
+    retry_jobs = _load_failed_ai_jobs()
+    retry_urls = {job.job_url for job in retry_jobs}
+    current_jobs = [job for job in listings if job.job_url not in retry_urls]
+    ordered_jobs = retry_jobs + current_jobs[:config.MAX_LLM_CANDIDATES]
+
     passed = []
-    consecutive_failures = 0
-    gemini_confirmed_exhausted = False
-    for listing in listings[: config.MAX_LLM_CANDIDATES]:
-        verdict, gemini_hit_rate_limit = evaluate_listing(
-            listing,
-            skip_gemini_retries=gemini_confirmed_exhausted,
-        )
-        if gemini_hit_rate_limit and not gemini_confirmed_exhausted:
-            gemini_confirmed_exhausted = True
-            log.info("Gemini quota confirmed exhausted for this run — skipping retry waits thereafter")
+    failed = []
+    total = len(ordered_jobs)
+    log.info("AI evaluation queue: %s previous failures + %s new candidates", len(retry_jobs), len(current_jobs[:config.MAX_LLM_CANDIDATES]))
 
-        exp_info = _parse_experience(listing.description or "")
-        if not exp_info["eligible_for_rahul"]:
-            listing.fit_score = 0
-            listing.fresher_appropriate = False
-            listing.reason = exp_info["reason"]
-            listing.fit_tier = "Reject"
+    for index, listing in enumerate(ordered_jobs, start=1):
+        log.info("Evaluating candidate %s/%s: %s", index, total, listing.title)
+        verdict, unresolved = evaluate_listing(listing)
+        if unresolved or verdict is None:
+            failed.append(listing)
             continue
-
-        listing.role_match = max(0, min(getattr(verdict, "role_match", 0), 25))
-        listing.experience_match = max(0, min(getattr(verdict, "experience_match", 0), 20))
-        listing.technical_match = max(0, min(getattr(verdict, "technical_match", 0), 25))
-        listing.project_match = max(0, min(getattr(verdict, "project_match", 0), 10))
-        listing.education_match = max(0, min(getattr(verdict, "education_match", 0), 10))
-        listing.location_match = max(0, min(getattr(verdict, "location_match", 0), 5))
-        listing.company_quality = max(0, min(getattr(verdict, "company_quality", 0), 5))
-        listing.fit_score = sum([
-            listing.role_match,
-            listing.experience_match,
-            listing.technical_match,
-            listing.project_match,
-            listing.education_match,
-            listing.location_match,
-            listing.company_quality,
-        ])
-        listing.fresher_appropriate = getattr(verdict, "is_fresher_appropriate", False)
-        listing.reason = getattr(verdict, "reason", "")
-        if isinstance(getattr(verdict, "why", None), list):
-            listing.reason = "; ".join(verdict.why)
-        if isinstance(getattr(verdict, "gaps", None), list):
-            listing.gaps = verdict.gaps
-
-        if listing.fit_score >= 90:
-            listing.fit_tier = "Exceptional"
-        elif listing.fit_score >= 80:
-            listing.fit_tier = "Strong"
-        elif listing.fit_score >= 70:
-            listing.fit_tier = "Good"
-        elif listing.fit_score >= 60:
-            listing.fit_tier = "Reasonable"
-        else:
-            listing.fit_tier = "Weak"
-
-        if getattr(verdict, "reason", "") == "all LLM providers failed — not evaluated":
-            consecutive_failures += 1
-        else:
-            consecutive_failures = 0
-
-        if consecutive_failures >= config.CONSECUTIVE_RATE_LIMIT_BREAKER:
-            log.warning(
-                "%s consecutive LLM failures — stopping to protect the run budget",
-                config.CONSECUTIVE_RATE_LIMIT_BREAKER,
-            )
-            break
-
-        if listing.fit_score >= config.LLM_FIT_THRESHOLD and listing.fresher_appropriate:
+        if _apply_verdict(listing, verdict):
             passed.append(listing)
 
-        if gemini_hit_rate_limit and not gemini_confirmed_exhausted:
-            time.sleep(4.5)
-
+    _save_failed_ai_jobs(failed)
     passed.sort(key=lambda l: l.fit_score, reverse=True)
     return passed
