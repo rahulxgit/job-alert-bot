@@ -17,6 +17,36 @@ from utils.logging_setup import get_logger
 
 log = get_logger("gateway")
 
+# Provider-wide circuit breaker. Repeated gateway failures are usually a
+# gateway health problem, not a candidate-specific problem. Stopping further
+# calls prevents the evaluator's per-candidate retry loop from multiplying a
+# provider outage across hundreds of jobs.
+_GATEWAY_FAILURE_BREAKER = max(1, int(getattr(config, "AI_GATEWAY_FAILURE_BREAKER", 3)))
+_gateway_consecutive_failures = 0
+_gateway_open = False
+
+
+def _record_success() -> None:
+    global _gateway_consecutive_failures, _gateway_open
+    _gateway_consecutive_failures = 0
+    _gateway_open = False
+
+
+def _record_failure(reason: str) -> None:
+    global _gateway_consecutive_failures, _gateway_open
+    _gateway_consecutive_failures += 1
+    if _gateway_consecutive_failures >= _GATEWAY_FAILURE_BREAKER:
+        _gateway_open = True
+        log.error(
+            "AI Gateway circuit opened after %s consecutive failures: %s",
+            _gateway_consecutive_failures,
+            reason,
+        )
+
+
+def gateway_circuit_open() -> bool:
+    return _gateway_open
+
 
 class GatewayProvider(AIProvider):
     name = "AI Gateway"
@@ -28,6 +58,10 @@ class GatewayProvider(AIProvider):
         failures. The timeout/retry budget is kept short so a degraded gateway
         cannot consume the entire daily job-search window.
         """
+        if _gateway_open:
+            log.warning("AI Gateway circuit is open; skipping gateway request")
+            return None
+
         retries = config.AI_GATEWAY_MAX_RETRIES if max_retries is None else max(0, max_retries)
 
         for attempt in range(retries + 1):
@@ -42,12 +76,9 @@ class GatewayProvider(AIProvider):
                     timeout=config.AI_GATEWAY_TIMEOUT_SECONDS,
                 )
 
-                # ``Mock`` objects used by unit tests (and lightweight test
-                # doubles) may not provide ``status_code``. Only classify HTTP
-                # status ranges when an actual integer status is available;
-                # otherwise let raise_for_status()/JSON parsing decide.
                 status_code = getattr(resp, "status_code", None)
                 if isinstance(status_code, int) and 400 <= status_code < 500:
+                    _record_failure(f"HTTP {status_code}")
                     log.warning(
                         "gateway rejected request with HTTP %s; falling back to Gemini",
                         status_code,
@@ -71,7 +102,7 @@ class GatewayProvider(AIProvider):
                 why = as_str_list(parsed.get("why"))
                 gaps = as_str_list(parsed.get("gaps"))
                 reason = str(parsed.get("reason") or "").strip() or "; ".join(why)
-                return FitVerdict(
+                verdict = FitVerdict(
                     fit_score=as_int(parsed.get("fit_score")),
                     is_fresher_appropriate=as_bool(parsed.get("is_fresher_appropriate")),
                     reason=reason,
@@ -86,8 +117,11 @@ class GatewayProvider(AIProvider):
                     why=why,
                     gaps=gaps,
                 )
+                _record_success()
+                return verdict
             except requests.RequestException as exc:
-                if attempt < retries:
+                _record_failure(str(exc))
+                if attempt < retries and not _gateway_open:
                     log.warning(
                         "gateway transient failure (attempt %s/%s): %s — retrying in %.1fs",
                         attempt + 1,
@@ -99,11 +133,12 @@ class GatewayProvider(AIProvider):
                     continue
                 log.warning(
                     "gateway unavailable after %s attempts: %s — falling back to Gemini",
-                    retries + 1,
+                    attempt + 1,
                     exc,
                 )
                 return None
             except (ValueError, TypeError, KeyError) as exc:
+                _record_failure(str(exc))
                 log.warning("gateway response invalid: %s — falling back to Gemini", exc)
                 return None
 
