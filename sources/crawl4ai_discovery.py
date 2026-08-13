@@ -1,12 +1,12 @@
-"""Crawl4AI-based job discovery from configured public job-search pages.
+"""Crawl4AI-based job discovery from configured public job-board roots.
 
 This source complements the existing specialized sources. It starts from a
-small, explicit set of public search/board URLs, uses Crawl4AI deep crawling
-to discover links, filters likely individual job pages, then extracts each
-job page into the existing JobListing contract.
+small, explicit set of public career/job-board roots, uses Crawl4AI deep
+crawling to discover links, filters likely individual job pages, then
+extracts each job page into the existing JobListing contract.
 
-The implementation is intentionally bounded: max seed pages, max discovered
-links, max detail pages, maximum crawl depth, and per-page timeout are all
+The implementation is intentionally bounded: max seed pages, max crawled
+pages, max crawl depth, max accepted job pages, and per-page timeout are all
 configurable. It does not replace LinkedIn/Google/Naukri/etc. and does not
 call Firecrawl directly; generic_crawler remains the provider fallback layer
 for known URLs.
@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Iterable
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 from crawl4ai.deep_crawling import BestFirstCrawlingStrategy
 from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter
+from crawl4ai.deep_crawling.scorers import KeywordRelevanceScorer
 
 import config
 from models import JobListing
@@ -34,22 +34,27 @@ _NON_JOB_DOMAINS = {
     "youtu.be", "t.me", "pinterest.com", "quora.com", "reddit.com",
 }
 _TRACKING_PREFIXES = ("utm_", "ref", "src", "trk", "gclid", "fbclid")
-_JOB_SIGNALS = (
-    "/job/", "/jobs/", "/jobs/view/", "/careers/", "/vacancy/", "/position/",
-    "/internship/", "greenhouse.io", "lever.co", "myworkdayjobs.com",
+_AGGREGATE_MARKERS = (
+    "/search", "/category", "/categories", "/tag", "/tags", "/browse",
+    "/find-jobs", "jobs.html", "careers-at", "jobs-at",
 )
-_AGGREGATE_SIGNALS = (
-    "search", "results", "category", "categories", "tag", "tags", "browse",
-    "find-jobs", "jobs.html", "careers-at", "jobs-at",
+_JOB_PATH_MARKERS = (
+    "/job/", "/jobs/", "/jobs/view/", "/vacancy/", "/position/", "/internship/",
+)
+_JOB_TEXT_SIGNALS = (
+    "requirements", "qualifications", "responsibilities", "experience",
+    "what you'll do", "what you will do", "apply", "skills", "education",
 )
 
 
 def _normalize_url(url: str) -> str:
+    """Return a stable HTTPS/HTTP URL without common tracking parameters."""
     if not url:
         return ""
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return ""
+
     kept = []
     for pair in parsed.query.split("&") if parsed.query else []:
         if not pair:
@@ -58,58 +63,56 @@ def _normalize_url(url: str) -> str:
         if key.startswith(_TRACKING_PREFIXES):
             continue
         kept.append(pair)
+
     query = f"?{'&'.join(kept)}" if kept else ""
-    path = parsed.path or "/"
-    return f"{parsed.scheme}://{parsed.netloc}{path}{query}"
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path or '/'}{query}"
 
 
 def _host(url: str) -> str:
     return urlparse(url).netloc.lower().removeprefix("www.")
 
 
+def _allowed_host(url: str) -> bool:
+    host = _host(url)
+    if not host or host in _NON_JOB_DOMAINS:
+        return False
+    return host in {d.lower().removeprefix("www.") for d in config.CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS}
+
+
 def _looks_job_url(url: str, title: str = "") -> bool:
     normalized = _normalize_url(url)
-    if not normalized:
+    if not normalized or not _allowed_host(normalized):
         return False
-    host = _host(normalized)
-    if host in _NON_JOB_DOMAINS or any(host.endswith(f".{d}") for d in _NON_JOB_DOMAINS):
-        return False
+
     low = normalized.lower()
     title_low = (title or "").lower()
-    if any(signal in low for signal in _AGGREGATE_SIGNALS) and not any(signal in low for signal in ("/job/", "/jobs/view/")):
+
+    if any(marker in low for marker in _AGGREGATE_MARKERS):
         return False
-    if any(signal in low for signal in _JOB_SIGNALS):
+    if any(marker in low for marker in _JOB_PATH_MARKERS):
         return True
-    if any(token in title_low for token in ("software engineer", "developer", "sde", "frontend", "backend", "full stack", "intern")):
-        return len(urlparse(normalized).path.strip("/").split("/")) >= 2
-    return False
 
-
-def _extract_links(markdown: str, base_url: str) -> list[str]:
-    links: list[str] = []
-    for match in re.finditer(r"\[[^\]]*\]\(([^)]+)\)", markdown or ""):
-        raw = match.group(1).strip()
-        if raw.startswith(("http://", "https://")):
-            links.append(raw)
-        else:
-            links.append(urljoin(base_url, raw))
-    for raw in re.findall(r"https?://[^\s)\]}>\"']+", markdown or ""):
-        links.append(raw.rstrip(".,;:"))
-    return list(dict.fromkeys(_normalize_url(link) for link in links if _normalize_url(link)))
+    # Some boards use opaque IDs/slugs without a conventional /job/ segment.
+    # Require a meaningful title to reduce false positives.
+    job_title_signal = any(
+        token in title_low
+        for token in ("software engineer", "developer", "sde", "frontend", "backend", "full stack", "intern")
+    )
+    return job_title_signal and len(urlparse(normalized).path.strip("/").split("/")) >= 2
 
 
 def _extract_title(markdown: str, fallback: str) -> str:
     for line in (markdown or "").splitlines():
-        line = line.strip().lstrip("#").strip()
-        if 3 <= len(line) <= 160:
-            return line
+        cleaned = line.strip().lstrip("#").strip()
+        if 3 <= len(cleaned) <= 160:
+            return cleaned
     return fallback or "Software Engineer"
 
 
 def _guess_company(title: str, url: str) -> str:
-    for sep in (" at ", " - ", " | "):
-        if sep in title:
-            candidate = title.split(sep, 1)[1].strip(" -|")
+    for separator in (" at ", " - ", " | "):
+        if separator in title:
+            candidate = title.split(separator, 1)[1].strip(" -|")
             if 1 < len(candidate) < 80:
                 return candidate
     host = _host(url).split(".")
@@ -127,14 +130,11 @@ def _guess_location(text: str) -> str:
 def _looks_like_job_text(markdown: str) -> bool:
     if not markdown:
         return False
-    low = markdown.lower()
-    if len(markdown.strip()) < config.CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS:
+    stripped = markdown.strip()
+    if len(stripped) < config.CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS:
         return False
-    signals = (
-        "requirements", "qualifications", "responsibilities", "experience",
-        "what you'll do", "what you will do", "apply", "skills",
-    )
-    return sum(1 for signal in signals if signal in low) >= 1
+    low = stripped.lower()
+    return sum(1 for signal in _JOB_TEXT_SIGNALS if signal in low) >= 1
 
 
 def _to_listing(url: str, markdown: str, seed_title: str = "") -> JobListing:
@@ -149,56 +149,75 @@ def _to_listing(url: str, markdown: str, seed_title: str = "") -> JobListing:
     )
 
 
-async def _discover() -> list[JobListing]:
-    seeds = list(config.CRAWL4AI_DISCOVERY_SEED_URLS)[: config.CRAWL4AI_DISCOVERY_MAX_SEEDS]
-    if not seeds:
-        return []
-
-    allowed_hosts = {_host(seed) for seed in seeds}
-    pattern_parts = [re.escape(host) for host in allowed_hosts if host]
-    url_filter = URLPatternFilter(patterns=[f"https?://({ '|'.join(pattern_parts) })/.*"] if pattern_parts else ["*"])
-    filter_chain = FilterChain([url_filter])
-    strategy = BestFirstCrawlingStrategy(
+def _strategy() -> BestFirstCrawlingStrategy:
+    allowed = [d.lower().removeprefix("www.") for d in config.CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS]
+    patterns = [f"https://{re.escape(domain)}/*" for domain in allowed] + [
+        f"https://www.{re.escape(domain)}/*" for domain in allowed
+    ]
+    filter_chain = FilterChain([URLPatternFilter(patterns=patterns)])
+    scorer = KeywordRelevanceScorer(
+        keywords=[
+            "software engineer", "software developer", "sde", "frontend", "backend",
+            "full stack", "react", "node", "javascript", "graduate", "fresher", "junior",
+        ],
+        weight=0.8,
+    )
+    return BestFirstCrawlingStrategy(
         max_depth=config.CRAWL4AI_DISCOVERY_MAX_DEPTH,
         max_pages=config.CRAWL4AI_DISCOVERY_MAX_PAGES,
         include_external=False,
         filter_chain=filter_chain,
-        score_threshold=0.0,
+        url_scorer=scorer,
     )
+
+
+async def _discover() -> list[JobListing]:
+    seeds = [
+        seed for seed in config.CRAWL4AI_DISCOVERY_SEED_URLS[: config.CRAWL4AI_DISCOVERY_MAX_SEEDS]
+        if _allowed_host(seed)
+    ]
+    if not seeds:
+        return []
+
     run_config = CrawlerRunConfig(
-        deep_crawl_strategy=strategy,
+        deep_crawl_strategy=_strategy(),
         stream=True,
         page_timeout=config.CRAWL4AI_DISCOVERY_TIMEOUT * 1000,
+        preserve_https_for_internal_links=True,
     )
 
     rows: list[JobListing] = []
     seen: set[str] = set()
+
     async with AsyncWebCrawler(config=BrowserConfig(headless=True)) as crawler:
         for seed in seeds:
             try:
-                async for result in await crawler.arun(seed, config=run_config):
+                results = await crawler.arun(url=seed, config=run_config)
+                async for result in results:
                     url = _normalize_url(getattr(result, "url", "") or seed)
+                    if not url or url in seen or not _allowed_host(url):
+                        continue
+                    seen.add(url)
+
                     markdown_obj = getattr(result, "markdown", "") or ""
                     markdown = getattr(markdown_obj, "raw_markdown", markdown_obj)
                     markdown = str(markdown).strip()
-                    if not url or url in seen:
-                        continue
-                    seen.add(url)
-                    title = ""
-                    metadata = getattr(result, "metadata", None)
-                    if isinstance(metadata, dict):
-                        title = str(metadata.get("title") or "")
+                    metadata = getattr(result, "metadata", {}) or {}
+                    title = str(metadata.get("title") or "") if isinstance(metadata, dict) else ""
+
                     if _looks_job_url(url, title) and _looks_like_job_text(markdown):
                         rows.append(_to_listing(url, markdown, title))
+                        log.info("[Crawl4AI] Discovered job: %s", url)
                         if len(rows) >= config.CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES:
                             return rows
             except Exception as exc:
                 log.warning("[Crawl4AI] Discovery failed for seed %s: %s", seed, exc)
+
     return rows
 
 
 def discover_job_listings() -> list[JobListing]:
-    """Run the bounded asynchronous discovery crawler from the sync pipeline."""
+    """Run bounded asynchronous discovery from the synchronous source API."""
     try:
         return asyncio.run(_discover())
     except RuntimeError as exc:
