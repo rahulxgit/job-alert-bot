@@ -1,136 +1,143 @@
+"""Canonical career-profile loader for job matching and application context.
+
+Only ``data/rahul-master-profile.json`` is read. Private contact fields and
+secrets are excluded from model context while the full factual career context
+is preserved, even when the master profile uses schema aliases or nesting.
 """
-Profile Adapter - Parses the canonical master profile JSON and extracts
-structured evidence for job matching.
-"""
+from __future__ import annotations
+
 import json
-import os
+from typing import Any
+
 import config
 from utils.logging_setup import get_logger
 
 log = get_logger("profile_adapter")
+MASTER_PROFILE_PATH = config.PROFILE_DATA_PATH
 
-MASTER_PROFILE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "rahul-master-profile.json")
 
 class ProfileLoadError(Exception):
-    pass
+    """Raised when the canonical master profile cannot be loaded."""
 
-def load_canonical_profile():
+
+def load_canonical_profile() -> dict[str, Any]:
     try:
         with open(MASTER_PROFILE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
     except Exception as exc:
-        log.error(f"Failed to load canonical profile from {MASTER_PROFILE_PATH}: {exc}")
-        raise ProfileLoadError(f"Failed to load master profile: {exc}")
+        log.error("Failed to load canonical profile from %s: %s", MASTER_PROFILE_PATH, exc)
+        raise ProfileLoadError(f"Failed to load master profile: {exc}") from exc
+    if not isinstance(data, dict) or not data:
+        raise ProfileLoadError("Canonical master profile is empty or invalid.")
+    return data
 
-def build_structured_profile() -> dict:
-    """Extracts structured evidence from the master profile."""
-    data = load_canonical_profile()
-    if not data:
-        raise ProfileLoadError("Canonical profile data is empty.")
 
-    # Extract Identity
-    identity = data.get("identity", {})
-    career_stage = identity.get("career_stage", "entry-level")
+_PRIVATE_OR_SECRET_KEYS = {
+    "phone", "pin_code", "full_address", "password", "passwords", "api_key", "api_keys",
+    "token", "tokens", "cookie", "cookies", "authentication_secrets", "secrets",
+    "refresh_token", "access_token", "client_secret", "private_key", "resume_pdf",
+}
 
-    # Extract Education
-    education = []
-    for edu in data.get("education", []):
-        education.append({
-            "degree": edu.get("degree", ""),
-            "branch": edu.get("branch", ""),
-            "graduation_year": edu.get("graduation_year", "") or edu.get("end_year", ""),
-            "institution": edu.get("institution", ""),
-            "cgpa": edu.get("cgpa", {}).get("value", "") if isinstance(edu.get("cgpa"), dict) else edu.get("cgpa", "")
-        })
 
-    # Extract Skills
-    skills = []
-    for category, skill_list in data.get("skills", {}).items():
-        if isinstance(skill_list, list):
-            for skill in skill_list:
-                if isinstance(skill, dict):
-                    if skill.get("proficiency") in ["strong", "moderate", "exposure", "regular use", "claimed"]:
-                        skills.append(f"{skill.get('name', '')} ({skill.get('proficiency', '')})")
-                elif isinstance(skill, str):
-                    skills.append(skill)
+def _sanitize_for_matching(value: Any, key: str = "") -> Any:
+    key_lower = key.lower()
+    if key_lower in _PRIVATE_OR_SECRET_KEYS or any(secret in key_lower for secret in ("password", "api_key", "token", "cookie", "secret")):
+        return None
+    if isinstance(value, dict):
+        cleaned = {}
+        for child_key, child_value in value.items():
+            sanitized = _sanitize_for_matching(child_value, child_key)
+            if sanitized is not None:
+                cleaned[child_key] = sanitized
+        return cleaned
+    if isinstance(value, list):
+        return [item for item in (_sanitize_for_matching(item, key) for item in value) if item is not None]
+    return value
 
-    # Extract Experience
-    experience = []
-    for exp in data.get("experience", []):
-        experience.append({
-            "role": exp.get("role", ""),
-            "company": exp.get("company", ""),
-            "duration": exp.get("duration", ""),
-            "technologies": exp.get("technologies", []),
-            "verification": exp.get("verification", {}).get("status", "unverified") if isinstance(exp.get("verification"), dict) else "unverified"
-        })
 
-    # Extract Job Preferences
-    job_prefs = data.get("job_preferences", {}).get("career_preferences", {})
-    target_roles = job_prefs.get("target_roles", [])
-    preferred_locations = job_prefs.get("preferred_locations", [])
-    target_company_types = job_prefs.get("target_company_types", [])
+def _normalize_key(key: str) -> str:
+    return "".join(ch for ch in key.lower() if ch.isalnum())
 
-    # Extract AI Engineering
-    ai_engineering = []
-    for ai_cap in data.get("ai_engineering", {}).get("capabilities", []):
-        if ai_cap.get("verified", False):
-            ai_engineering.append(f"{ai_cap.get('skill', '')}: {ai_cap.get('description', '')}")
 
-    # Extract Projects
-    projects = []
-    projects_data = data.get("projects", {})
-    all_projects = (
-        projects_data.get("flagship_projects", []) +
-        projects_data.get("ai_projects", []) +
-        projects_data.get("professional_projects", [])
-    )
-    for proj in all_projects:
-        status = proj.get("status", "unknown")
-        projects.append({
-            "name": proj.get("name", ""),
-            "description": proj.get("description", ""),
-            "technologies": proj.get("technologies", {}).get("verified", []) if isinstance(proj.get("technologies"), dict) else [],
-            "status": status
-        })
+def _find_alias_value(data: dict[str, Any], aliases: set[str]) -> Any:
+    normalized_aliases = {_normalize_key(alias) for alias in aliases}
 
-    # Build raw text representation for LLM prompt context
-    raw_text = []
-    name = identity.get("full_name", "")
-    raw_text.append(f"Name: {name}")
-    raw_text.append(f"Career Stage: {career_stage}")
-    raw_text.append(f"Target Roles: {', '.join(target_roles)}")
-    raw_text.append(f"Preferred Locations: {', '.join(preferred_locations)}")
-    raw_text.append(f"Target Company Types: {', '.join(target_company_types)}")
-    raw_text.append(f"Education: " + "; ".join([f"{e['degree']} in {e['branch']} from {e['institution']} ({e['graduation_year']}) CGPA: {e['cgpa']}" for e in education]))
+    def walk(node: Any) -> Any:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if _normalize_key(str(key)) in normalized_aliases and value not in (None, "", [], {}):
+                    return value
+            for value in node.values():
+                found = walk(value)
+                if found not in (None, "", [], {}):
+                    return found
+        elif isinstance(node, list):
+            for item in node:
+                found = walk(item)
+                if found not in (None, "", [], {}):
+                    return found
+        return None
 
-    raw_text.append(f"\nVerified Experience:")
-    for e in experience:
-        techs = ", ".join(e['technologies'])
-        raw_text.append(f"- {e['role']} at {e['company']} ({e['duration']}) [Status: {e['verification']}] Tech: {techs}")
+    return walk(data)
 
-    raw_text.append(f"\nSkills: {', '.join(skills)}")
 
-    raw_text.append(f"\nVerified AI Engineering Capabilities:")
-    for ai_cap in ai_engineering:
-        raw_text.append(f"- {ai_cap}")
+def _section(title: str, value: Any) -> list[str]:
+    if value in (None, "", [], {}):
+        value = "No dedicated section was found; consult Additional Master-Profile Data only when relevant."
+    return [f"\n## {title}\n{json.dumps(value, ensure_ascii=False, indent=2)}"]
 
-    raw_text.append("\nVerified Projects:")
-    for p in projects:
-        techs = ", ".join(p["technologies"])
-        raw_text.append(f"- {p['name']}: {p['description'][:200]}... [Tech: {techs}] [Status: {p['status']}]")
 
-    return {
-        "identity": {"career_stage": career_stage, "name": name},
-        "education": education,
-        "experience": experience,
-        "skills": skills,
-        "projects": projects,
-        "job_preferences": job_prefs,
-        "ai_engineering": ai_engineering,
-        "raw_text": "\n".join(raw_text)
+def get_full_profile_text(data: dict[str, Any] | None = None) -> str:
+    """Serialize the canonical profile into complete model context."""
+    if data is None:
+        data = build_structured_profile()
+    section_specs = [
+        ("Identity & Career Stage", {"identity", "career_stage", "personal_identity"}),
+        ("Contact & Public Profiles", {"contact", "public_profiles"}),
+        ("Location & Work Preferences", {"location", "work_preferences", "preferred_locations"}),
+        ("Professional Profile", {"professional_profile", "professional_summary", "professional_identity"}),
+        ("Career Objective", {"career_objective", "career_goals", "objective"}),
+        ("Education", {"education", "academic_background", "academics"}),
+        ("Experience", {"experience", "work_experience", "internships", "employment"}),
+        ("Skills", {"skills", "technical_skills", "technical_profile", "technical_stack", "skillset", "technologies"}),
+        ("AI Engineering", {"ai_engineering", "ai_capabilities", "ai_skills", "llm_engineering"}),
+        ("Projects", {"projects", "project_portfolio", "project_experience"}),
+        ("Leadership", {"leadership", "leadership_experience", "campus_leadership"}),
+        ("Achievements", {"achievements", "awards", "honors"}),
+        ("Competitive Programming / CP Profile", {"competitive_programming", "competitive_programming_profile", "cp_profile", "programming_profile", "coding_profile", "ds_algorithm_profile"}),
+        ("Job Preferences", {"job_preferences", "career_preferences", "target_preferences"}),
+        ("Application / Career Content", {"application_content", "application_profile", "application_context", "resume_context"}),
+        ("Cover Letter / Motivation Context", {"cover_letter", "cover_letter_context", "motivation", "motivation_context"}),
+        ("Interview / Personal Positioning", {"about_narrative", "personal_brand", "interview_context", "positioning", "personal_positioning"}),
+    ]
+
+    selected = [(title, _find_alias_value(data, aliases)) for title, aliases in section_specs]
+    excluded_top_level = {
+        "_meta", "privacy", "identity", "contact", "location", "professional_profile", "career_objective",
+        "education", "experience", "skills", "technical_skills", "technical_profile", "technical_stack",
+        "skillset", "technologies", "ai_engineering", "projects", "project_portfolio", "project_experience",
+        "leadership", "achievements", "competitive_programming", "job_preferences", "application_content",
+        "application_profile", "application_context", "resume_context", "cover_letter", "motivation",
+        "about_narrative",
     }
+    remaining = {key: value for key, value in data.items() if key not in excluded_top_level}
+    selected.append(("Additional Master-Profile Data", remaining))
+
+    lines = [
+        "CANONICAL CANDIDATE PROFILE — SOURCE OF TRUTH",
+        "Use this profile as the factual authority for matching. Do not invent missing facts.",
+    ]
+    for title, value in selected:
+        lines.extend(_section(title, value))
+    return "\n".join(lines)
+
+
+def build_structured_profile() -> dict[str, Any]:
+    data = _sanitize_for_matching(load_canonical_profile())
+    assert isinstance(data, dict)
+    data["raw_text"] = get_full_profile_text(data)
+    return data
+
 
 def get_profile_text() -> str:
-    """Returns the text representation of the canonical profile."""
-    return build_structured_profile().get("raw_text", "")
+    return get_full_profile_text()
