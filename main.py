@@ -1,5 +1,4 @@
 import argparse
-import time
 """
 Daily job alert bot — entry point.
 
@@ -91,13 +90,7 @@ def _source_breakdown(listings: list[JobListing]) -> dict:
 
 
 def _enrich_descriptions_with_crawl4ai(listings: list[JobListing]) -> list[JobListing]:
-    """Fill only missing/short descriptions with bounded generic crawling.
-
-    Crawl4AI is deliberately not used for every listing: JobSpy and the
-    dedicated sources already return descriptions for most jobs. This keeps
-    browser work bounded while making Crawl4AI the default generic scraper.
-    In ``auto`` mode, generic_crawler falls back to Firecrawl if available.
-    """
+    """Fill only missing/short descriptions with bounded generic crawling."""
     max_pages = max(0, int(config.CRAWL4AI_MAX_DETAIL_PAGES))
     min_chars = max(0, int(config.CRAWL4AI_MIN_DESCRIPTION_CHARS))
     candidates = [
@@ -138,7 +131,6 @@ def _export(stage: str, listings: list[JobListing], **metadata) -> None:
         path = export_stage(stage, listings, metadata=metadata)
         log.info("[Artifacts] %s: %s jobs -> %s", stage, len(listings), path)
     except Exception as exc:
-        # Artifact export must never become a new reason for the production job to fail.
         log.warning("[Artifacts] failed to export %s: %s", stage, exc)
 
 
@@ -156,7 +148,7 @@ def run_pipeline(dry_run: bool = False):
     _export("enriched-listings", all_listings, source_counts=source_counts)
 
     shortlist = prefilter(all_listings)
-    log.info(f"{len(shortlist)} passed the keyword pre-filter (sent for AI review)")
+    log.info(f"{len(shortlist)} passed the precise pre-filter (AI pool cap {config.MAX_LLM_CANDIDATES})")
     log.info(f"  by source: {_source_breakdown(shortlist)}")
     _export("prefilter-shortlist", shortlist, source_counts=_source_breakdown(shortlist))
 
@@ -186,14 +178,7 @@ def run_pipeline(dry_run: bool = False):
             log.info("Dry run: email not sent.")
         return
 
-    evaluation_deadline = time.monotonic() + config.LLM_EVALUATION_BUDGET_SECONDS
-    log.info(
-        "AI evaluation budget: %ss; candidates available: %s",
-        config.LLM_EVALUATION_BUDGET_SECONDS,
-        min(len(unseen), config.MAX_LLM_CANDIDATES),
-    )
-    candidates_for_review = unseen[: config.MAX_LLM_CANDIDATES]
-    reviewed = review_candidates(candidates_for_review, deadline=evaluation_deadline)
+    reviewed = review_candidates(unseen)
     log.info(f"{len(reviewed)} passed AI fit review (score >= {config.LLM_FIT_THRESHOLD})")
     log.info(f"  by source: {_source_breakdown(reviewed)}")
     _export("ai-reviewed", reviewed, threshold=config.LLM_FIT_THRESHOLD)
@@ -215,8 +200,6 @@ def run_pipeline(dry_run: bool = False):
     log.info(f"  found an email for {found_count}/{len(reviewed)} jobs")
 
     reviewed.sort(key=lambda l: (bool(l.recruiter_email), l.fit_score), reverse=True)
-    # This is intentionally written immediately before the Sheets call so a Sheets
-    # failure leaves the exact would-have-been-written rows in the Actions artifact.
     _export("final-reviewed", reviewed, recruiter_email_count=found_count)
 
     export_summary({
