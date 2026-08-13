@@ -1,12 +1,16 @@
 import argparse
+import re
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
+
 """
 Daily job alert bot — entry point.
 
-Pipeline: fetch from independent sources -> dedupe -> keyword pre-filter ->
-fill missing/short job descriptions with Crawl4AI (Firecrawl fallback when
-configured) -> AI review -> recruiter-email enrichment -> sort -> Sheet/email.
+Pipeline: fetch from independent sources -> normalize metadata -> dedupe ->
+keyword pre-filter -> fill missing/short job descriptions with Crawl4AI
+(Firecrawl fallback when configured) -> AI review -> recruiter-email
+ enrichment -> sort -> Sheet/email.
 """
-import pandas as pd
 
 import config
 from models import JobListing
@@ -71,6 +75,77 @@ def _normalize_url(url: str) -> str:
     return f"{base}?{'&'.join(kept)}" if kept else base
 
 
+def _guess_company(listing: JobListing) -> str:
+    if listing.company and listing.company.strip():
+        return listing.company.strip()
+    title = (listing.title or "").strip()
+    for separator in (" at ", " - ", " | "):
+        if separator in title:
+            candidate = title.split(separator, 1)[1].strip(" -|")
+            if 1 < len(candidate) < 100:
+                return candidate
+    host = urlparse(listing.job_url or "").netloc.lower().removeprefix("www.")
+    if host:
+        parts = host.split(".")
+        if parts and parts[0] not in {"jobs", "job", "careers", "apply"}:
+            return parts[0].replace("-", " ").title()
+    return "Unknown"
+
+
+def _guess_posting_date(text: str) -> str:
+    if not text:
+        return ""
+    if re.search(r"\b(posted\s+today|just\s+posted)\b", text, re.IGNORECASE):
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    relative = re.search(r"posted\s+(\d+)\s*(hour|day|week|month)s?\s+ago", text, re.IGNORECASE)
+    if relative:
+        amount = int(relative.group(1))
+        unit = relative.group(2).lower()
+        delta = {
+            "hour": timedelta(hours=amount),
+            "day": timedelta(days=amount),
+            "week": timedelta(weeks=amount),
+            "month": timedelta(days=amount * 30),
+        }[unit]
+        return (datetime.now(timezone.utc) - delta).strftime("%Y-%m-%d")
+    iso = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", text)
+    return iso.group(1) if iso else ""
+
+
+def _normalize_metadata(listings: list[JobListing]) -> list[JobListing]:
+    """Fill missing source metadata without overwriting authoritative values."""
+    company_guessed = 0
+    posting_dates_inferred = 0
+    for listing in listings:
+        if not listing.company or not listing.company.strip():
+            listing.company = _guess_company(listing)
+            listing.company_confidence = "guessed" if listing.company != "Unknown" else "unknown"
+            company_guessed += 1
+        elif getattr(listing, "company_confidence", "unknown") == "unknown":
+            listing.company_confidence = "source"
+
+        if not listing.posting_date:
+            inferred = _guess_posting_date(" ".join([
+                listing.title or "",
+                listing.description or "",
+            ]))
+            if inferred:
+                listing.posting_date = inferred
+                listing.freshness_confidence = "parsed"
+                posting_dates_inferred += 1
+            else:
+                listing.freshness_confidence = "unknown"
+        elif getattr(listing, "freshness_confidence", "unknown") == "unknown":
+            listing.freshness_confidence = "source"
+
+    log.info(
+        "Metadata normalization: guessed %s companies; inferred %s posting dates",
+        company_guessed,
+        posting_dates_inferred,
+    )
+    return listings
+
+
 def dedupe(listings: list[JobListing]) -> list[JobListing]:
     seen, unique = set(), []
     for listing in listings:
@@ -116,10 +191,14 @@ def _enrich_descriptions_with_crawl4ai(listings: list[JobListing]) -> list[JobLi
             )
             if enriched and len((enriched.description or "").strip()) > len((listing.description or "").strip()):
                 listing.description = enriched.description
-                if not listing.company:
-                    listing.company = enriched.company
+                if not listing.company or listing.company == "Unknown":
+                    listing.company = enriched.company or listing.company
+                    listing.company_confidence = "crawler" if enriched.company else listing.company_confidence
                 if not listing.location:
                     listing.location = enriched.location
+                if not listing.posting_date:
+                    listing.posting_date = enriched.posting_date
+                    listing.freshness_confidence = "source" if enriched.posting_date else "unknown"
                 log.info("[Crawl4AI] Enriched: %s", listing.job_url)
         except Exception as exc:
             log.warning("[Crawl4AI] Enrichment failed for %s: %s", listing.job_url, exc)
@@ -137,6 +216,7 @@ def _export(stage: str, listings: list[JobListing], **metadata) -> None:
 def run_pipeline(dry_run: bool = False):
     log.info("Fetching from all sources...")
     all_listings, source_counts = fetch_all()
+    all_listings = _normalize_metadata(all_listings)
     _export("raw-listings", all_listings, source_counts=source_counts)
 
     all_listings = dedupe(all_listings)
