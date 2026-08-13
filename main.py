@@ -24,6 +24,7 @@ from sources.arbeitnow import ArbeitnowSource
 from sources.remoteok import RemoteOKSource
 from sources.firecrawl import FirecrawlSource
 from sources.generic_crawler import crawl_url
+from sources.crawl4ai_discovery import Crawl4AIDiscoverySource
 from ai.evaluator import prefilter, review_candidates
 from enrichment.recruiter_email import enrich_with_emails
 from sheets.google_sheets import get_sheet, get_seen_urls, log_new_jobs
@@ -36,7 +37,9 @@ ALL_SOURCES = [
     LinkedInSource(), GoogleJobsSource(),
     InternshalaSource(), NaukriSource(), WellfoundSource(),
     GreenhouseSource(), LeverSource(), YouTubeSource(), LinkedInPostsSource(),
-    ArbeitnowSource(), RemoteOKSource(), FirecrawlSource(),
+    ArbeitnowSource(), RemoteOKSource(),
+    Crawl4AIDiscoverySource(),
+    FirecrawlSource(),
 ]
 
 

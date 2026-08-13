@@ -144,6 +144,36 @@ CRAWL4AI_TIMEOUT = int(os.environ.get("CRAWL4AI_TIMEOUT", "30"))
 CRAWL4AI_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_MAX_DETAIL_PAGES", "25"))
 CRAWL4AI_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_MIN_DESCRIPTION_CHARS", "300"))
 
+# --- Crawl4AI discovery -----------------------------------------------------
+# Disabled by default until the discovery PR is explicitly enabled. This
+# keeps the already-stable production pipeline unchanged until discovery has
+# been observed in CI and on a controlled run.
+CRAWL4AI_DISCOVERY_ENABLED = os.environ.get("CRAWL4AI_DISCOVERY_ENABLED", "false").lower() == "true"
+CRAWL4AI_DISCOVERY_TIMEOUT = int(os.environ.get("CRAWL4AI_DISCOVERY_TIMEOUT", "20"))
+CRAWL4AI_DISCOVERY_MAX_SEEDS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_SEEDS", "3"))
+CRAWL4AI_DISCOVERY_MAX_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_PAGES", "20"))
+CRAWL4AI_DISCOVERY_MAX_DEPTH = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DEPTH", "2"))
+CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES", "12"))
+CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS", "400"))
+CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS", "6000"))
+CRAWL4AI_DISCOVERY_LOCATIONS = [
+    "Bengaluru", "Bangalore", "Pune", "Hyderabad", "Gurugram", "Gurgaon", "Noida",
+    "Delhi NCR", "Mumbai", "Chennai", "Kolkata", "Ahmedabad", "Remote", "India",
+]
+# Direct public board/search seeds. Search-engine result pages are not used as
+# deep-crawl roots because the crawler would otherwise stay on the search
+# engine host instead of reaching the discovered job-board domains.
+CRAWL4AI_DISCOVERY_SEED_URLS = [
+    "https://boards.greenhouse.io/",
+    "https://jobs.lever.co/",
+    "https://jobs.ashbyhq.com/",
+]
+CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS = [
+    "boards.greenhouse.io",
+    "jobs.lever.co",
+    "jobs.ashbyhq.com",
+]
+
 # --- YouTube -----------------------------------------------------------------
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 YOUTUBE_CHANNEL_URLS = [
