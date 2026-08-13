@@ -186,11 +186,19 @@ def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> 
     return gemini_verdict, False
 
 
-def review_candidates(listings: list[JobListing]) -> list[JobListing]:
+def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
+    """Review candidates until the configured wall-clock deadline is reached."""
     passed = []
     consecutive_failures = 0
     gemini_confirmed_exhausted = False
-    for listing in listings:
+    for index, listing in enumerate(listings, start=1):
+        if deadline is not None and time.monotonic() >= deadline:
+            log.warning(
+                "AI evaluation deadline reached before candidate %s/%s; stopping with partial results.",
+                index,
+                len(listings),
+            )
+            break
         verdict, gemini_hit_rate_limit = evaluate_listing(listing, skip_gemini_retries=gemini_confirmed_exhausted)
         if gemini_hit_rate_limit and not gemini_confirmed_exhausted:
             gemini_confirmed_exhausted = True
@@ -237,5 +245,12 @@ def review_candidates(listings: list[JobListing]) -> list[JobListing]:
             passed.append(listing)
         if gemini_hit_rate_limit and not gemini_confirmed_exhausted:
             time.sleep(4.5)
+        if deadline is not None and time.monotonic() >= deadline:
+            log.warning(
+                "AI evaluation deadline reached after candidate %s/%s; returning partial results.",
+                index,
+                len(listings),
+            )
+            break
     passed.sort(key=lambda l: l.fit_score, reverse=True)
     return passed
