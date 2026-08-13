@@ -74,8 +74,6 @@ class GeminiProvider(AIProvider):
                     except (TypeError, ValueError):
                         retry_after = backoff_seconds * (attempt + 1)
 
-                    # Never let server-provided Retry-After turn one candidate
-                    # into a multi-minute blocking operation.
                     wait = min(max(retry_after, 0), config.GEMINI_MAX_RETRY_WAIT_SECONDS)
                     if attempt < max_retries and wait > 0:
                         log.warning(
@@ -88,10 +86,12 @@ class GeminiProvider(AIProvider):
                         continue
                     return FitVerdict(hit_rate_limit=True, reason="rate limited")
 
-                # Do not retry permanent client/auth errors.
+                # Permanent client/auth errors are provider failures, not valid
+                # zero-score job evaluations. The evaluator will retry the same
+                # candidate rather than advancing to the next job.
                 if 400 <= resp.status_code < 500:
                     log.warning("Gemini rejected request with HTTP %s", resp.status_code)
-                    return FitVerdict(reason=f"Gemini HTTP {resp.status_code}", hit_rate_limit=False)
+                    return FitVerdict(reason="evaluation failed", hit_rate_limit=False)
 
                 resp.raise_for_status()
                 payload = resp.json()
