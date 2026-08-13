@@ -145,8 +145,9 @@ CRAWL4AI_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_MAX_DETAIL_PAGES", "25"
 CRAWL4AI_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_MIN_DESCRIPTION_CHARS", "300"))
 
 # --- Crawl4AI discovery -----------------------------------------------------
-# Disabled by default at the config layer so the feature can be enabled
-# explicitly in GitHub Actions after the separate discovery PR is validated.
+# Disabled by default until the discovery PR is explicitly enabled. This
+# keeps the already-stable production pipeline unchanged until discovery has
+# been observed in CI and on a controlled run.
 CRAWL4AI_DISCOVERY_ENABLED = os.environ.get("CRAWL4AI_DISCOVERY_ENABLED", "false").lower() == "true"
 CRAWL4AI_DISCOVERY_TIMEOUT = int(os.environ.get("CRAWL4AI_DISCOVERY_TIMEOUT", "20"))
 CRAWL4AI_DISCOVERY_MAX_SEEDS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_SEEDS", "3"))
@@ -159,12 +160,18 @@ CRAWL4AI_DISCOVERY_LOCATIONS = [
     "Bengaluru", "Bangalore", "Pune", "Hyderabad", "Gurugram", "Gurgaon", "Noida",
     "Delhi NCR", "Mumbai", "Chennai", "Kolkata", "Ahmedabad", "Remote", "India",
 ]
-# Public board/search seeds only. These are intentionally small and bounded;
-# specialized sources remain the main discovery layer.
+# Direct public board/search seeds. Search-engine result pages are not used as
+# deep-crawl roots because the crawler would otherwise stay on the search
+# engine host instead of reaching the discovered job-board domains.
 CRAWL4AI_DISCOVERY_SEED_URLS = [
-    "https://www.google.com/search?q=site%3Aboards.greenhouse.io+software+engineer+India+fresher",
-    "https://www.google.com/search?q=site%3Ajobs.lever.co+software+engineer+India+fresher",
-    "https://www.google.com/search?q=site%3Ajobs.ashbyhq.com+software+engineer+India+fresher",
+    "https://boards.greenhouse.io/",
+    "https://jobs.lever.co/",
+    "https://jobs.ashbyhq.com/",
+]
+CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS = [
+    "boards.greenhouse.io",
+    "jobs.lever.co",
+    "jobs.ashbyhq.com",
 ]
 
 # --- YouTube -----------------------------------------------------------------
