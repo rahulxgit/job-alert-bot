@@ -1,7 +1,7 @@
 from unittest.mock import Mock, patch
 
 import config
-from models import FitVerdict, JobListing
+from models import JobListing
 from ai.gateway_provider import GatewayProvider
 from ai.gemini_provider import GeminiProvider
 from enrichment import recruiter_email
@@ -67,15 +67,25 @@ def test_gemini_retries_after_malformed_json_then_succeeds():
 def test_apollo_403_disables_apollo_for_rest_of_run():
     response = Mock()
     response.status_code = 403
-    with patch("enrichment.recruiter_email.requests.post", return_value=response):
-        recruiter_email._apollo_disabled_for_run = False
-        assert recruiter_email._apollo_find_contact("Example", "example.com") == ""
-        assert recruiter_email._apollo_disabled_for_run is True
+    original_key = config.APOLLO_API_KEY
+    config.APOLLO_API_KEY = "test-key"
+    try:
+        with patch("enrichment.recruiter_email.requests.post", return_value=response):
+            recruiter_email._apollo_disabled_for_run = False
+            assert recruiter_email._apollo_find_contact("Example", "example.com") == ""
+            assert recruiter_email._apollo_disabled_for_run is True
+    finally:
+        config.APOLLO_API_KEY = original_key
 
 
 def test_apollo_disabled_state_is_reset_for_each_enrichment_run():
+    original_key = config.APOLLO_API_KEY
+    config.APOLLO_API_KEY = "test-key"
     recruiter_email._apollo_disabled_for_run = True
     listings = [JobListing(job_url="https://example.com/job/1", title="Engineer", company="Example", description="No email")]
-    with patch("enrichment.recruiter_email._apollo_find_contact") as mock_apollo:
-        recruiter_email.enrich_with_emails(listings)
-    mock_apollo.assert_called_once()
+    try:
+        with patch("enrichment.recruiter_email._apollo_find_contact", return_value="") as mock_apollo:
+            recruiter_email.enrich_with_emails(listings)
+        mock_apollo.assert_called_once()
+    finally:
+        config.APOLLO_API_KEY = original_key
