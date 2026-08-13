@@ -2,7 +2,6 @@ from unittest.mock import patch
 
 import config
 import main
-from models import JobListing
 from sources.crawl4ai_discovery import _extract_links, _looks_job_url, _looks_like_job_text, _normalize_url
 
 
@@ -12,8 +11,10 @@ def test_normalize_url_removes_tracking_parameters():
 
 def test_job_url_classifier_accepts_detail_pages_and_rejects_aggregates():
     assert _looks_job_url("https://boards.greenhouse.io/acme/jobs/123", "Software Engineer")
+    # Unsupported domains are intentionally rejected even when their URL looks job-like.
     assert _looks_job_url("https://example.com/job/software-engineer-123", "Software Engineer") is False
-    assert _looks_job_url("https://jobs.lever.co/acme/software-engineer-123", "Software Engineer") is False
+    # Lever's public job-detail URL shape is a supported individual job page.
+    assert _looks_job_url("https://jobs.lever.co/acme/software-engineer-123", "Software Engineer")
     assert not _looks_job_url("https://boards.greenhouse.io/search?q=software-engineer", "Search results")
 
 
