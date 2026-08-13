@@ -49,6 +49,8 @@ jobs:
           # Keep Firecrawl code available but do not spend credits on the
           # scheduled run. Set this to "true" when credits are available.
           FIRECRAWL_ENABLED: "false"
+          # Keep deep Crawl4AI discovery disabled unless explicitly enabled.
+          CRAWL4AI_DISCOVERY_ENABLED: "false"
           JOBSPY_MAX_COMBINATIONS: "24"
           JOBSPY_RESULTS_PER_SITE: "15"
           JOBSPY_CALL_TIMEOUT_SECONDS: "60"
@@ -56,3 +58,12 @@ jobs:
           CRAWL4AI_TIMEOUT: "30"
           CRAWL4AI_MAX_DETAIL_PAGES: "25"
         run: python -u main.py
+
+      - name: Upload job run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-run-${{ github.run_id }}-${{ github.run_attempt }}
+          path: run-artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
