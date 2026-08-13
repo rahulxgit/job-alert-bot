@@ -2,19 +2,16 @@
 Primary AI provider — self-hosted multi-provider gateway
 (github.com/rahulxgit/ai-gateway, deployed at ai-gateway-wx35.onrender.com).
 Called first for every candidate. The gateway already fails over across
-7+ providers internally, so a single call here is effectively backed by
-multiple providers already. Given a light retry (2 attempts) since it's
-now the primary path and deserves more resilience than a one-shot
-fallback call — a transient network blip shouldn't immediately punt to
-Gemini. No auth required (open endpoint).
+multiple providers internally, so transient failures should fall back to
+Gemini rather than aborting the run.
 """
-import json
 import time
 import requests
 
 import config
 from models import FitVerdict
 from ai.base import AIProvider
+from utils.llm_json import as_bool, as_int, as_str_list, parse_json_object
 from utils.logging_setup import get_logger
 
 log = get_logger("gateway")
@@ -23,40 +20,59 @@ log = get_logger("gateway")
 class GatewayProvider(AIProvider):
     name = "AI Gateway"
 
-    def evaluate(self, prompt: str, max_retries: int = 1) -> FitVerdict:
-        """Returns a FitVerdict, or None if every attempt failed —
-        None specifically signals the caller to fall back to Gemini."""
+    def evaluate(self, prompt: str, max_retries: int = 1) -> FitVerdict | None:
+        """Return a normalized verdict, or None so the caller can use Gemini."""
         for attempt in range(max_retries + 1):
             try:
                 resp = requests.post(
                     f"{config.AI_GATEWAY_URL}/chat",
                     headers={"Content-Type": "application/json"},
-                    json={"messages": [{"role": "user", "content": prompt}], "taskType": "reasoning"},
+                    json={
+                        "messages": [{"role": "user", "content": prompt}],
+                        "taskType": "reasoning",
+                    },
                     timeout=45,
                 )
                 resp.raise_for_status()
-                content = resp.json().get("content", "")
-                text = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-                parsed = json.loads(text)
+
+                payload = resp.json()
+                content = payload.get("content", "") if isinstance(payload, dict) else ""
+                if isinstance(content, dict):
+                    parsed = content
+                else:
+                    parsed = parse_json_object(str(content))
+
+                why = as_str_list(parsed.get("why"))
+                gaps = as_str_list(parsed.get("gaps"))
+                reason = str(parsed.get("reason") or "").strip() or "; ".join(why)
                 return FitVerdict(
-                    fit_score=parsed.get("fit_score", 0),
-                    is_fresher_appropriate=parsed.get("is_fresher_appropriate", False),
-                    reason=parsed.get("reason", "") or "; ".join(parsed.get("why", [])),
-                    role_match=parsed.get("role_match", 0),
-                    experience_match=parsed.get("experience_match", 0),
-                    technical_match=parsed.get("technical_match", 0),
-                    project_match=parsed.get("project_match", 0),
-                    education_match=parsed.get("education_match", 0),
-                    location_match=parsed.get("location_match", 0),
-                    company_quality=parsed.get("company_quality", 0),
-                    decision=parsed.get("decision", ""),
-                    why=parsed.get("why", []),
-                    gaps=parsed.get("gaps", []),
+                    fit_score=as_int(parsed.get("fit_score")),
+                    is_fresher_appropriate=as_bool(parsed.get("is_fresher_appropriate")),
+                    reason=reason,
+                    role_match=as_int(parsed.get("role_match")),
+                    experience_match=as_int(parsed.get("experience_match")),
+                    technical_match=as_int(parsed.get("technical_match")),
+                    project_match=as_int(parsed.get("project_match")),
+                    education_match=as_int(parsed.get("education_match")),
+                    location_match=as_int(parsed.get("location_match")),
+                    company_quality=as_int(parsed.get("company_quality")),
+                    decision=str(parsed.get("decision") or ""),
+                    why=why,
+                    gaps=gaps,
                 )
-            except Exception as exc:
+            except (requests.RequestException, ValueError, TypeError, KeyError) as exc:
                 if attempt < max_retries:
-                    log.warning(f"gateway call failed (attempt {attempt + 1}/{max_retries + 1}): {exc} — retrying in 3s")
+                    log.warning(
+                        "gateway call failed (attempt %s/%s): %s — retrying in 3s",
+                        attempt + 1,
+                        max_retries + 1,
+                        exc,
+                    )
                     time.sleep(3)
                 else:
-                    log.warning(f"gateway failed after {max_retries + 1} attempts: {exc} — falling back to Gemini")
+                    log.warning(
+                        "gateway failed after %s attempts: %s — falling back to Gemini",
+                        max_retries + 1,
+                        exc,
+                    )
         return None
