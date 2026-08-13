@@ -1,4 +1,5 @@
 import argparse
+import time
 """
 Daily job alert bot — entry point.
 
@@ -162,8 +163,11 @@ def run_pipeline(dry_run: bool = False):
     if not shortlist:
         export_summary({"status": "completed_no_shortlist", "source_counts": source_counts, "shortlist_count": 0})
         log.info("Nothing to review — no matches today.")
-        gmail = get_gmail_service()
-        if not dry_run: send_email(gmail, build_email_body([], source_counts), 0)
+        if not dry_run:
+            gmail = get_gmail_service()
+            send_email(gmail, build_email_body([], source_counts), 0)
+        else:
+            log.info("Dry run: email not sent.")
         return
 
     sheet = get_sheet()
@@ -175,11 +179,21 @@ def run_pipeline(dry_run: bool = False):
     if not unseen:
         export_summary({"status": "completed_no_new_jobs", "source_counts": source_counts, "shortlist_count": len(shortlist), "unseen_count": 0})
         log.info("Everything in the shortlist was already logged — nothing new to review.")
-        gmail = get_gmail_service()
-        if not dry_run: send_email(gmail, build_email_body([], source_counts), 0)
+        if not dry_run:
+            gmail = get_gmail_service()
+            send_email(gmail, build_email_body([], source_counts), 0)
+        else:
+            log.info("Dry run: email not sent.")
         return
 
-    reviewed = review_candidates(unseen)
+    evaluation_deadline = time.monotonic() + config.LLM_EVALUATION_BUDGET_SECONDS
+    log.info(
+        "AI evaluation budget: %ss; candidates available: %s",
+        config.LLM_EVALUATION_BUDGET_SECONDS,
+        min(len(unseen), config.MAX_LLM_CANDIDATES),
+    )
+    candidates_for_review = unseen[: config.MAX_LLM_CANDIDATES]
+    reviewed = review_candidates(candidates_for_review, deadline=evaluation_deadline)
     log.info(f"{len(reviewed)} passed AI fit review (score >= {config.LLM_FIT_THRESHOLD})")
     log.info(f"  by source: {_source_breakdown(reviewed)}")
     _export("ai-reviewed", reviewed, threshold=config.LLM_FIT_THRESHOLD)
@@ -217,10 +231,13 @@ def run_pipeline(dry_run: bool = False):
     if not dry_run:
         log_new_jobs(sheet, reviewed)
 
-    gmail = get_gmail_service()
     body = build_email_body(reviewed, source_counts)
-    if not dry_run: send_email(gmail, body, len(reviewed))
-    log.info("Email sent.")
+    if not dry_run:
+        gmail = get_gmail_service()
+        send_email(gmail, body, len(reviewed))
+        log.info("Email sent.")
+    else:
+        log.info("Dry run: email not sent.")
 
 
 if __name__ == "__main__":
