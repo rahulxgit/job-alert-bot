@@ -1,6 +1,7 @@
 """Export sanitized pipeline snapshots for GitHub Actions recovery/debugging."""
 from __future__ import annotations
 
+import csv
 import json
 import os
 from dataclasses import asdict, is_dataclass
@@ -24,10 +25,7 @@ def _jsonable(value: Any) -> Any:
 def _job_rows(listings: Iterable[Any]) -> list[dict[str, Any]]:
     rows = []
     for listing in listings:
-        if hasattr(listing, "to_dict"):
-            row = listing.to_dict()
-        else:
-            row = _jsonable(listing)
+        row = listing.to_dict() if hasattr(listing, "to_dict") else _jsonable(listing)
         rows.append(_jsonable(row))
     return rows
 
@@ -42,9 +40,20 @@ def export_stage(stage: str, listings: Iterable[Any], *, metadata: dict[str, Any
         "metadata": metadata or {},
         "jobs": rows,
     }
-    path = ARTIFACT_DIR / f"{stage}.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return str(path)
+    json_path = ARTIFACT_DIR / f"{stage}.json"
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    csv_path = ARTIFACT_DIR / f"{stage}.csv"
+    fieldnames = sorted({key for row in rows for key in row}) or ["job_url"]
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({
+                key: json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value
+                for key, value in row.items()
+            })
+    return str(json_path)
 
 
 def export_summary(summary: dict[str, Any]) -> str:
