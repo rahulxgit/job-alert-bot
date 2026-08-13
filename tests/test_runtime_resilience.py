@@ -5,7 +5,7 @@ from models import JobListing
 from ai.gateway_provider import GatewayProvider
 from ai.gemini_provider import GeminiProvider
 from enrichment import recruiter_email
-from sheets.google_sheets import _listing_to_sheet_row, _sheet_value
+from sheets.google_sheets import _listing_to_sheet_row, _sheet_value, log_new_jobs
 from utils.llm_json import parse_json_object
 
 
@@ -25,6 +25,20 @@ def test_listing_row_contains_only_sheet_scalars():
     row = _listing_to_sheet_row(listing)
     assert all(isinstance(value, (str, int, float)) for value in row)
     assert row[3] == "San Francisco"
+
+
+def test_log_new_jobs_writes_list_location_as_scalar():
+    sheet = Mock()
+    listing = JobListing(
+        job_url="https://example.com/job/1",
+        title="Software Engineer",
+        company="Example",
+        location=["San Francisco"],
+        description="Requirements: React",
+    )
+    log_new_jobs(sheet, [listing])
+    rows = sheet.append_rows.call_args.args[0]
+    assert rows[0][3] == "San Francisco"
 
 
 def test_parse_json_object_handles_fenced_and_surrounded_json():
