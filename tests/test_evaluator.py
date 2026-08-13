@@ -1,23 +1,111 @@
-"""Tests for the keyword pre-filter and parsing logic."""
-import sys, os
+"""Tests for the precise keyword pre-filter and parsing logic."""
+import sys
+import os
+from datetime import datetime, timedelta, timezone
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import JobListing
 from ai.evaluator import keyword_prefilter_score, _parse_experience, prefilter
 import config
 
+
 def test_senior_role_scores_zero():
-    listing = JobListing(job_url="x", title="Senior Software Engineer", description="9-12 years experience required")
+    listing = JobListing(
+        job_url="x",
+        title="Senior Software Engineer",
+        description="9-12 years experience required react node.js",
+    )
     assert keyword_prefilter_score(listing) == 0
 
+
 def test_fresher_role_scores_positive():
-    listing = JobListing(job_url="x", title="SDE 1 Fresher", description="react node.js mongodb fresher entry level")
+    listing = JobListing(
+        job_url="x",
+        title="SDE 1 Fresher",
+        description="react node.js mongodb fresher entry level",
+        location="Bengaluru, India",
+    )
     assert keyword_prefilter_score(listing) > 0
 
-def test_email_in_description_boosts_score():
-    base = JobListing(job_url="x", title="Junior Developer", description="react node fresher")
-    with_email = JobListing(job_url="y", title="Junior Developer", description="react node fresher hr@company.com")
+
+def test_unrelated_role_is_rejected_even_with_one_profile_keyword():
+    listing = JobListing(
+        job_url="x",
+        title="Mechanical Design Engineer",
+        description="uses python and occasionally works with databases",
+        location="Bengaluru, India",
+    )
+    assert keyword_prefilter_score(listing) == 0
+
+
+def test_multiple_core_technologies_can_pass_without_exact_role_title():
+    listing = JobListing(
+        job_url="x",
+        title="Web Application Specialist",
+        description="React, Node.js, Express, MongoDB, REST API, fresher friendly",
+        location="Pune, India",
+    )
+    assert keyword_prefilter_score(listing) >= config.MIN_LIGHTWEIGHT_SCORE
+
+
+def test_outside_preferred_geography_is_rejected():
+    listing = JobListing(
+        job_url="x",
+        title="Software Engineer",
+        description="React Node.js fresher",
+        location="New York, United States",
+    )
+    assert keyword_prefilter_score(listing) == 0
+
+
+def test_hard_cs_only_degree_requirement_is_rejected():
+    listing = JobListing(
+        job_url="x",
+        title="Software Engineer",
+        description="React Node.js. B.Tech in Computer Science only. Freshers welcome.",
+        location="Bengaluru, India",
+    )
+    assert keyword_prefilter_score(listing) == 0
+
+
+def test_any_engineering_branch_remains_eligible():
+    listing = JobListing(
+        job_url="x",
+        title="Graduate Software Engineer",
+        description="React Node.js. Any engineering branch. 0-2 years.",
+        location="Hyderabad, India",
+    )
+    assert keyword_prefilter_score(listing) >= config.MIN_LIGHTWEIGHT_SCORE
+
+
+def test_old_dated_listing_is_rejected():
+    old_date = (datetime.now(timezone.utc) - timedelta(days=config.FRESHNESS_DAYS + 1)).strftime("%Y-%m-%d")
+    listing = JobListing(
+        job_url="x",
+        title="Software Engineer",
+        description="React Node.js fresher",
+        location="Bengaluru, India",
+        posting_date=old_date,
+    )
+    assert keyword_prefilter_score(listing) == 0
+
+
+def test_email_in_description_still_boosts_score():
+    base = JobListing(
+        job_url="x",
+        title="Junior Developer",
+        description="React Node.js fresher",
+        location="Bengaluru, India",
+    )
+    with_email = JobListing(
+        job_url="y",
+        title="Junior Developer",
+        description="React Node.js fresher hr@company.com",
+        location="Bengaluru, India",
+    )
     assert keyword_prefilter_score(with_email) > keyword_prefilter_score(base)
+
 
 def test_parse_experience_eligible_formats():
     cases = [
@@ -32,11 +120,12 @@ def test_parse_experience_eligible_formats():
         "0–2 years",
         "1 year experience",
         "1+ years",
-        "up to 1 year"
+        "up to 1 year",
     ]
     for c in cases:
         res = _parse_experience(c)
-        assert res["eligible_for_rahul"] == True, f"Failed on: {c}"
+        assert res["eligible_for_rahul"] is True, f"Failed on: {c}"
+
 
 def test_parse_experience_rejects_mandatory():
     cases = [
@@ -50,48 +139,63 @@ def test_parse_experience_rejects_mandatory():
     ]
     for c in cases:
         res = _parse_experience(c)
-        assert res["eligible_for_rahul"] == False, f"Failed on: {c}"
+        assert res["eligible_for_rahul"] is False, f"Failed on: {c}"
+
 
 def test_parse_experience_allows_preferred_when_fresher_friendly():
     cases = [
         "2+ years preferred, freshers welcome",
         "3 years preferred, new grad",
-        "experience is a plus, entry level"
+        "experience is a plus, entry level",
     ]
     for c in cases:
         res = _parse_experience(c)
-        assert res["eligible_for_rahul"] == True, f"Failed on: {c}"
+        assert res["eligible_for_rahul"] is True, f"Failed on: {c}"
 
-def test_prefilter_allocation_fairness():
-    # Simulate an imbalanced pool
+
+def test_prefilter_preserves_300_candidate_cap_and_source_fairness():
     sources = []
-    # 2500 greenhouse
-    sources.extend([JobListing(job_url=f"greenhouse/{i}", title="dev", description="fresher", source="Greenhouse") for i in range(2500)])
-    # 1300 linkedin
-    sources.extend([JobListing(job_url=f"linkedin/{i}", title="dev", description="fresher", source="LinkedIn") for i in range(1300)])
-    # 200 internshala
-    sources.extend([JobListing(job_url=f"internshala/{i}", title="dev", description="fresher", source="Internshala") for i in range(200)])
-    # 150 firecrawl
-    sources.extend([JobListing(job_url=f"firecrawl/{i}", title="dev", description="fresher", source="Firecrawl") for i in range(150)])
-    # 100 wellfound
-    sources.extend([JobListing(job_url=f"wellfound/{i}", title="dev", description="fresher", source="Wellfound") for i in range(100)])
+    template = "Software Engineer fresher React Node.js MongoDB entry level"
+    for i in range(2500):
+        sources.append(JobListing(
+            job_url=f"greenhouse/{i}", title="Software Engineer", description=template,
+            location="Bengaluru, India", source="Greenhouse",
+        ))
+    for i in range(1300):
+        sources.append(JobListing(
+            job_url=f"linkedin/{i}", title="SDE 1", description=template,
+            location="Pune, India", source="LinkedIn",
+        ))
+    for i in range(200):
+        sources.append(JobListing(
+            job_url=f"internshala/{i}", title="Full Stack Developer", description=template,
+            location="Hyderabad, India", source="Internshala",
+        ))
+    for i in range(150):
+        sources.append(JobListing(
+            job_url=f"firecrawl/{i}", title="React Developer", description=template,
+            location="Remote", source="Firecrawl",
+        ))
+    for i in range(100):
+        sources.append(JobListing(
+            job_url=f"wellfound/{i}", title="Backend Developer", description=template,
+            location="India", source="Wellfound",
+        ))
 
-    # Store old limits
     old_max = config.MAX_LLM_CANDIDATES
+    old_min_slots = config.MIN_CANDIDATES_PER_SOURCE
     config.MAX_LLM_CANDIDATES = 300
     config.MIN_CANDIDATES_PER_SOURCE = 5
 
-    pool = prefilter(sources)
+    try:
+        pool = prefilter(sources)
+    finally:
+        config.MAX_LLM_CANDIDATES = old_max
+        config.MIN_CANDIDATES_PER_SOURCE = old_min_slots
 
-    config.MAX_LLM_CANDIDATES = old_max
-
-    # Verify pool size is constrained
     assert len(pool) <= 300
-
-    # Verify fair distribution: every source should have representation
     source_counts = {}
     for p in pool:
         source_counts[p.source] = source_counts.get(p.source, 0) + 1
-
     for src in ["Greenhouse", "LinkedIn", "Internshala", "Firecrawl", "Wellfound"]:
         assert source_counts.get(src, 0) >= 5

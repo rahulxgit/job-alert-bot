@@ -106,7 +106,6 @@ CRAWL4AI_DISCOVERY_SEED_URLS = ["https://boards.greenhouse.io/", "https://jobs.l
 CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS = ["boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com"]
 
 # --- Canonical master profile -----------------------------------------------
-# ONLY data/rahul-master-profile.json is used for candidate/job-match context.
 PROFILE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "rahul-master-profile.json")
 
 # --- YouTube -----------------------------------------------------------------
@@ -140,10 +139,55 @@ PROFILE_KEYWORDS = [
 FRESHER_SIGNALS = ["sde 1", "sde-1", "sde i", "software development engineer i", "fresher", "0-1 year", "0-2 year", "0 - 2 year", "0-2 yrs", "entry level", "entry-level", "graduate engineer", "graduate trainee", "junior", "campus hire", "new grad", "intern"]
 SENIORITY_EXCLUSIONS = ["senior", "sr.", "sr ", "staff", "principal", "lead", "architect", "manager", "director", "head of", "vp ", "9-12 yr", "6-9 yr", "5-8 yr", "8+ year", "10+ year", "7+ year", "6+ year", "5+ year", "4+ year"]
 PRIORITY_COMPANIES = ["razorpay", "sarvam", "groww", "meesho", "zepto", "cred", "swiggy", "zomato", "flipkart", "postman", "browserstack", "freshworks"]
-MAX_LLM_CANDIDATES = 300
+
+# Keep the broad AI candidate pool; precision is enforced before the LLM stage.
+MAX_LLM_CANDIDATES = int(os.environ.get("MAX_LLM_CANDIDATES", "300"))
 LLM_FIT_THRESHOLD = 70
-MIN_LIGHTWEIGHT_SCORE = 3
+MIN_LIGHTWEIGHT_SCORE = int(os.environ.get("MIN_LIGHTWEIGHT_SCORE", "6"))
+MIN_CANDIDATES_PER_SOURCE = int(os.environ.get("MIN_CANDIDATES_PER_SOURCE", "5"))
 CONSECUTIVE_RATE_LIMIT_BREAKER = 5
+
+ROLE_MATCH_TERMS = [
+    "software engineer", "software development engineer", "software developer",
+    "sde", "full stack developer", "full stack engineer", "fullstack developer",
+    "frontend developer", "frontend engineer", "backend developer", "backend engineer",
+    "mern developer", "mern stack developer", "react developer", "react.js developer",
+    "node.js developer", "javascript developer", "typescript developer", "product engineer",
+    "application developer", "associate software engineer", "graduate software engineer",
+    "junior software engineer", "junior developer", "web developer",
+]
+CORE_TECH_TERMS = [
+    "react", "react.js", "reactjs", "node", "node.js", "express", "express.js",
+    "javascript", "typescript", "next.js", "nextjs", "mern", "mongodb", "rest api",
+    "api development", "html", "css", "sql", "postgresql", "mysql", "supabase",
+    "firebase", "redux", "react query", "tailwindcss", "docker", "git", "github",
+]
+PREFERRED_LOCATIONS = [
+    "bengaluru", "bangalore", "pune", "hyderabad", "gurgaon", "gurugram", "noida",
+    "delhi ncr", "mumbai", "chennai", "india", "remote", "work from home", "wfh",
+]
+NON_PREFERRED_LOCATION_SIGNALS = [
+    "united states", "usa", "canada", "uk", "united kingdom", "australia", "germany",
+    "france", "singapore", "dubai", "uae", "europe",
+]
+EDUCATION_HARD_EXCLUSION_SIGNALS = [
+    "b.tech in computer science only", "b.e. in computer science only",
+    "b.e./b.tech in computer science only", "b.e./b.tech in cse only",
+    "b.tech in cse only", "b.tech in information technology only",
+    "b.e./b.tech in cs/it only", "computer science degree required",
+    "computer science or information technology degree required",
+    "only candidates with computer science",
+]
+EDUCATION_OPEN_SIGNALS = [
+    "any engineering branch", "all engineering branches", "any branch",
+    "any degree", "bachelor's degree", "bachelors degree", "engineering degree",
+    "technology or engineering", "computer science or related field",
+]
+FRESHNESS_DAYS = int(os.environ.get("PREFILTER_FRESHNESS_DAYS", "30"))
+
+# Compatibility ceiling for the existing main.py call path. The scheduled
+# workflow is limited to 55 minutes, so this does not reduce search coverage.
+LLM_EVALUATION_BUDGET_SECONDS = int(os.environ.get("LLM_EVALUATION_BUDGET_SECONDS", "86400"))
 
 # --- AI providers -----------------------------------------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -172,4 +216,4 @@ _REQUIRED_FOR_REAL_RUN = ["GEMINI_API_KEY", "GOOGLE_SHEET_ID", "GOOGLE_SERVICE_A
 def validate():
     missing = [name for name in _REQUIRED_FOR_REAL_RUN if not globals().get(name)]
     if missing:
-        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+        raise RuntimeError(", ".join(missing))

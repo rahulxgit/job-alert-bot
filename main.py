@@ -90,13 +90,7 @@ def _source_breakdown(listings: list[JobListing]) -> dict:
 
 
 def _enrich_descriptions_with_crawl4ai(listings: list[JobListing]) -> list[JobListing]:
-    """Fill only missing/short descriptions with bounded generic crawling.
-
-    Crawl4AI is deliberately not used for every listing: JobSpy and the
-    dedicated sources already return descriptions for most jobs. This keeps
-    browser work bounded while making Crawl4AI the default generic scraper.
-    In ``auto`` mode, generic_crawler falls back to Firecrawl if available.
-    """
+    """Fill only missing/short descriptions with bounded generic crawling."""
     max_pages = max(0, int(config.CRAWL4AI_MAX_DETAIL_PAGES))
     min_chars = max(0, int(config.CRAWL4AI_MIN_DESCRIPTION_CHARS))
     candidates = [
@@ -137,7 +131,6 @@ def _export(stage: str, listings: list[JobListing], **metadata) -> None:
         path = export_stage(stage, listings, metadata=metadata)
         log.info("[Artifacts] %s: %s jobs -> %s", stage, len(listings), path)
     except Exception as exc:
-        # Artifact export must never become a new reason for the production job to fail.
         log.warning("[Artifacts] failed to export %s: %s", stage, exc)
 
 
@@ -155,15 +148,18 @@ def run_pipeline(dry_run: bool = False):
     _export("enriched-listings", all_listings, source_counts=source_counts)
 
     shortlist = prefilter(all_listings)
-    log.info(f"{len(shortlist)} passed the keyword pre-filter (sent for AI review)")
+    log.info(f"{len(shortlist)} passed the precise pre-filter (AI pool cap {config.MAX_LLM_CANDIDATES})")
     log.info(f"  by source: {_source_breakdown(shortlist)}")
     _export("prefilter-shortlist", shortlist, source_counts=_source_breakdown(shortlist))
 
     if not shortlist:
         export_summary({"status": "completed_no_shortlist", "source_counts": source_counts, "shortlist_count": 0})
         log.info("Nothing to review — no matches today.")
-        gmail = get_gmail_service()
-        if not dry_run: send_email(gmail, build_email_body([], source_counts), 0)
+        if not dry_run:
+            gmail = get_gmail_service()
+            send_email(gmail, build_email_body([], source_counts), 0)
+        else:
+            log.info("Dry run: email not sent.")
         return
 
     sheet = get_sheet()
@@ -175,8 +171,11 @@ def run_pipeline(dry_run: bool = False):
     if not unseen:
         export_summary({"status": "completed_no_new_jobs", "source_counts": source_counts, "shortlist_count": len(shortlist), "unseen_count": 0})
         log.info("Everything in the shortlist was already logged — nothing new to review.")
-        gmail = get_gmail_service()
-        if not dry_run: send_email(gmail, build_email_body([], source_counts), 0)
+        if not dry_run:
+            gmail = get_gmail_service()
+            send_email(gmail, build_email_body([], source_counts), 0)
+        else:
+            log.info("Dry run: email not sent.")
         return
 
     reviewed = review_candidates(unseen)
@@ -201,8 +200,6 @@ def run_pipeline(dry_run: bool = False):
     log.info(f"  found an email for {found_count}/{len(reviewed)} jobs")
 
     reviewed.sort(key=lambda l: (bool(l.recruiter_email), l.fit_score), reverse=True)
-    # This is intentionally written immediately before the Sheets call so a Sheets
-    # failure leaves the exact would-have-been-written rows in the Actions artifact.
     _export("final-reviewed", reviewed, recruiter_email_count=found_count)
 
     export_summary({
@@ -217,10 +214,13 @@ def run_pipeline(dry_run: bool = False):
     if not dry_run:
         log_new_jobs(sheet, reviewed)
 
-    gmail = get_gmail_service()
     body = build_email_body(reviewed, source_counts)
-    if not dry_run: send_email(gmail, body, len(reviewed))
-    log.info("Email sent.")
+    if not dry_run:
+        gmail = get_gmail_service()
+        send_email(gmail, body, len(reviewed))
+        log.info("Email sent.")
+    else:
+        log.info("Dry run: email not sent.")
 
 
 if __name__ == "__main__":
