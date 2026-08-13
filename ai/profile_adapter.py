@@ -1,20 +1,18 @@
 """Canonical career-profile loader for job matching and application context.
 
-Only ``data/rahul-master-profile.json`` is read. The adapter deliberately
-excludes private contact fields and secrets while preserving the full factual
-career context needed for high-quality JD matching.
+Only ``data/rahul-master-profile.json`` is read. Private contact fields and
+secrets are excluded from model context while the full factual career context
+is preserved, even when the master profile uses schema aliases or nesting.
 """
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 import config
 from utils.logging_setup import get_logger
 
 log = get_logger("profile_adapter")
-
 MASTER_PROFILE_PATH = config.PROFILE_DATA_PATH
 
 
@@ -42,7 +40,6 @@ _PRIVATE_OR_SECRET_KEYS = {
 
 
 def _sanitize_for_matching(value: Any, key: str = "") -> Any:
-    """Recursively remove private/secrets and internal source-control noise."""
     key_lower = key.lower()
     if key_lower in _PRIVATE_OR_SECRET_KEYS or any(secret in key_lower for secret in ("password", "api_key", "token", "cookie", "secret")):
         return None
@@ -58,60 +55,81 @@ def _sanitize_for_matching(value: Any, key: str = "") -> Any:
     return value
 
 
-def build_structured_profile() -> dict[str, Any]:
-    """Return the complete sanitized canonical profile as structured evidence."""
-    data = load_canonical_profile()
-    sanitized = _sanitize_for_matching(data)
-    assert isinstance(sanitized, dict)
-    return sanitized
+def _normalize_key(key: str) -> str:
+    return "".join(ch for ch in key.lower() if ch.isalnum())
+
+
+def _find_alias_value(data: dict[str, Any], aliases: set[str]) -> Any:
+    normalized_aliases = {_normalize_key(alias) for alias in aliases}
+
+    def walk(node: Any) -> Any:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if _normalize_key(str(key)) in normalized_aliases and value not in (None, "", [], {}):
+                    return value
+            for value in node.values():
+                found = walk(value)
+                if found not in (None, "", [], {}):
+                    return found
+        elif isinstance(node, list):
+            for item in node:
+                found = walk(item)
+                if found not in (None, "", [], {}):
+                    return found
+        return None
+
+    return walk(data)
 
 
 def _section(title: str, value: Any) -> list[str]:
     if value in (None, "", [], {}):
-        return []
-    body = json.dumps(value, ensure_ascii=False, indent=2)
-    return [f"\n## {title}\n{body}"]
+        value = "No dedicated section was found; consult Additional Master-Profile Data only when relevant."
+    return [f"\n## {title}\n{json.dumps(value, ensure_ascii=False, indent=2)}"]
 
 
 def get_full_profile_text() -> str:
-    """Serialize the canonical profile into complete, readable model context."""
     data = build_structured_profile()
-    preferred_sections = [
-        ("Identity & Career Stage", data.get("identity")),
-        ("Contact & Public Profiles", data.get("contact")),
-        ("Location & Work Preferences", data.get("location")),
-        ("Professional Profile", data.get("professional_profile")),
-        ("Career Objective", data.get("career_objective")),
-        ("Education", data.get("education")),
-        ("Experience", data.get("experience")),
-        ("Skills", data.get("skills")),
-        ("AI Engineering", data.get("ai_engineering")),
-        ("Projects", data.get("projects")),
-        ("Leadership", data.get("leadership")),
-        ("Achievements", data.get("achievements")),
-        ("Competitive Programming / CP Profile", data.get("competitive_programming")),
-        ("Job Preferences", data.get("job_preferences")),
-        ("Application / Career Content", data.get("application_content")),
-        ("Cover Letter / Motivation Context", data.get("cover_letter")),
-        ("Interview / Personal Positioning", data.get("about_narrative")),
-        ("Additional Master-Profile Data", {
-            key: value for key, value in data.items()
-            if key not in {"_meta", "identity", "contact", "location", "privacy", "professional_profile",
-                           "career_objective", "education", "experience", "skills", "ai_engineering",
-                           "projects", "leadership", "achievements", "competitive_programming",
-                           "job_preferences", "application_content", "cover_letter", "about_narrative"}
-        }),
+    section_specs = [
+        ("Identity & Career Stage", {"identity", "career_stage", "personal_identity"}),
+        ("Contact & Public Profiles", {"contact", "public_profiles"}),
+        ("Location & Work Preferences", {"location", "work_preferences", "preferred_locations"}),
+        ("Professional Profile", {"professional_profile", "professional_summary", "professional_identity"}),
+        ("Career Objective", {"career_objective", "career_goals", "objective"}),
+        ("Education", {"education", "academic_background", "academics"}),
+        ("Experience", {"experience", "work_experience", "internships", "employment"}),
+        ("Skills", {"skills", "technical_skills", "technical_profile", "technical_stack", "skillset", "technologies"}),
+        ("AI Engineering", {"ai_engineering", "ai_capabilities", "ai_skills", "llm_engineering"}),
+        ("Projects", {"projects", "project_portfolio", "project_experience"}),
+        ("Leadership", {"leadership", "leadership_experience", "campus_leadership"}),
+        ("Achievements", {"achievements", "awards", "honors"}),
+        ("Competitive Programming / CP Profile", {"competitive_programming", "competitive_programming_profile", "cp_profile", "programming_profile", "coding_profile", "ds_algorithm_profile"}),
+        ("Job Preferences", {"job_preferences", "career_preferences", "target_preferences"}),
+        ("Application / Career Content", {"application_content", "application_profile", "application_context", "resume_context"}),
+        ("Cover Letter / Motivation Context", {"cover_letter", "cover_letter_context", "motivation", "motivation_context"}),
+        ("Interview / Personal Positioning", {"about_narrative", "personal_brand", "interview_context", "positioning", "personal_positioning"}),
     ]
+
+    selected = [(title, _find_alias_value(data, aliases)) for title, aliases in section_specs]
+    remaining = {
+        key: value for key, value in data.items()
+        if key not in {"_meta", "privacy", "identity", "contact", "location", "professional_profile", "career_objective", "education", "experience", "projects", "leadership", "achievements", "job_preferences", "about_narrative"}
+    }
+    selected.append(("Additional Master-Profile Data", remaining))
 
     lines = [
         "CANONICAL CANDIDATE PROFILE — SOURCE OF TRUTH",
         "Use this profile as the factual authority for matching. Do not invent missing facts.",
     ]
-    for title, value in preferred_sections:
+    for title, value in selected:
         lines.extend(_section(title, value))
     return "\n".join(lines)
 
 
+def build_structured_profile() -> dict[str, Any]:
+    data = _sanitize_for_matching(load_canonical_profile())
+    assert isinstance(data, dict)
+    return data
+
+
 def get_profile_text() -> str:
-    """Backward-compatible alias used by existing callers."""
     return get_full_profile_text()
