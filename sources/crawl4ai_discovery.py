@@ -1,21 +1,9 @@
-"""Crawl4AI-based job discovery from configured public job-board roots.
-
-This source complements the existing specialized sources. It starts from a
-small, explicit set of public career/job-board roots, uses Crawl4AI deep
-crawling to discover links, filters likely individual job pages, then
-extracts each job page into the existing JobListing contract.
-
-The implementation is intentionally bounded: max seed pages, max crawled
-pages, max crawl depth, max accepted job pages, and per-page timeout are all
-configurable. It does not replace LinkedIn/Google/Naukri/etc. and does not
-call Firecrawl directly; generic_crawler remains the provider fallback layer
-for known URLs.
-"""
+"""Crawl4AI-based job discovery from configured public job-board roots."""
 from __future__ import annotations
 
 import asyncio
 import re
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 from crawl4ai.deep_crawling import BestFirstCrawlingStrategy
@@ -48,13 +36,11 @@ _JOB_TEXT_SIGNALS = (
 
 
 def _normalize_url(url: str) -> str:
-    """Return a stable HTTPS/HTTP URL without common tracking parameters."""
     if not url:
         return ""
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return ""
-
     kept = []
     for pair in parsed.query.split("&") if parsed.query else []:
         if not pair:
@@ -63,7 +49,6 @@ def _normalize_url(url: str) -> str:
         if key.startswith(_TRACKING_PREFIXES):
             continue
         kept.append(pair)
-
     query = f"?{'&'.join(kept)}" if kept else ""
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path or '/'}{query}"
 
@@ -76,29 +61,42 @@ def _allowed_host(url: str) -> bool:
     host = _host(url)
     if not host or host in _NON_JOB_DOMAINS:
         return False
-    return host in {d.lower().removeprefix("www.") for d in config.CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS}
+    allowed = {d.lower().removeprefix("www.") for d in config.CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS}
+    return host in allowed
 
 
 def _looks_job_url(url: str, title: str = "") -> bool:
     normalized = _normalize_url(url)
     if not normalized or not _allowed_host(normalized):
         return False
-
     low = normalized.lower()
     title_low = (title or "").lower()
-
     if any(marker in low for marker in _AGGREGATE_MARKERS):
         return False
     if any(marker in low for marker in _JOB_PATH_MARKERS):
         return True
-
-    # Some boards use opaque IDs/slugs without a conventional /job/ segment.
-    # Require a meaningful title to reduce false positives.
     job_title_signal = any(
         token in title_low
         for token in ("software engineer", "developer", "sde", "frontend", "backend", "full stack", "intern")
     )
     return job_title_signal and len(urlparse(normalized).path.strip("/").split("/")) >= 2
+
+
+def _extract_links(markdown: str, base_url: str) -> list[str]:
+    """Extract and normalize markdown/bare HTTP(S) links for deterministic tests and diagnostics."""
+    found: list[str] = []
+    for match in re.finditer(r"\[[^\]]*\]\(([^)]+)\)", markdown or ""):
+        raw = match.group(1).strip()
+        found.append(raw if raw.startswith(("http://", "https://")) else urljoin(base_url, raw))
+    found.extend(re.findall(r"https?://[^\s)\]}>\"']+", markdown or ""))
+    normalized = []
+    seen = set()
+    for raw in found:
+        clean = _normalize_url(raw.rstrip(".,;:"))
+        if clean and clean not in seen:
+            seen.add(clean)
+            normalized.append(clean)
+    return normalized
 
 
 def _extract_title(markdown: str, fallback: str) -> str:
@@ -188,7 +186,6 @@ async def _discover() -> list[JobListing]:
 
     rows: list[JobListing] = []
     seen: set[str] = set()
-
     async with AsyncWebCrawler(config=BrowserConfig(headless=True)) as crawler:
         for seed in seeds:
             try:
@@ -198,13 +195,11 @@ async def _discover() -> list[JobListing]:
                     if not url or url in seen or not _allowed_host(url):
                         continue
                     seen.add(url)
-
                     markdown_obj = getattr(result, "markdown", "") or ""
                     markdown = getattr(markdown_obj, "raw_markdown", markdown_obj)
                     markdown = str(markdown).strip()
                     metadata = getattr(result, "metadata", {}) or {}
                     title = str(metadata.get("title") or "") if isinstance(metadata, dict) else ""
-
                     if _looks_job_url(url, title) and _looks_like_job_text(markdown):
                         rows.append(_to_listing(url, markdown, title))
                         log.info("[Crawl4AI] Discovered job: %s", url)
@@ -212,12 +207,10 @@ async def _discover() -> list[JobListing]:
                             return rows
             except Exception as exc:
                 log.warning("[Crawl4AI] Discovery failed for seed %s: %s", seed, exc)
-
     return rows
 
 
 def discover_job_listings() -> list[JobListing]:
-    """Run bounded asynchronous discovery from the synchronous source API."""
     try:
         return asyncio.run(_discover())
     except RuntimeError as exc:
