@@ -152,16 +152,12 @@ def _contains_any(text: str, terms: list[str]) -> list[str]:
 
 
 def _location_score(text: str) -> tuple[int, bool]:
-    """Return (score, hard_mismatch) for the candidate's preferred geography."""
     normalized = text.lower()
     preferred_hits = _contains_any(normalized, config.PREFERRED_LOCATIONS)
     if preferred_hits:
         return min(5, 2 + len(preferred_hits)), False
-
-    # Remote roles without an explicit country are still useful for a broad search.
     if "remote" in normalized or "work from home" in normalized or "wfh" in normalized:
         return 5, False
-
     outside_hits = _contains_any(normalized, config.NON_PREFERRED_LOCATION_SIGNALS)
     if outside_hits:
         return 0, True
@@ -178,14 +174,9 @@ def _education_score(text: str) -> tuple[int, bool]:
 
 
 def _freshness_score(listing: JobListing) -> tuple[int, bool]:
-    """Prefer recent postings when a trustworthy posting date is available.
-
-    Unknown dates are not rejected so sources without a date do not lose coverage.
-    """
     raw = (listing.posting_date or "").strip()
     if not raw:
         return 0, False
-
     match = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", raw)
     if not match:
         return 0, False
@@ -193,7 +184,6 @@ def _freshness_score(listing: JobListing) -> tuple[int, bool]:
         posted = datetime.strptime(match.group(1), "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except ValueError:
         return 0, False
-
     age_days = (datetime.now(timezone.utc) - posted).days
     if age_days < 0:
         return 1, False
@@ -224,7 +214,7 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     core_tech_hits = _contains_any(full_text, config.CORE_TECH_TERMS)
 
     # A broad keyword hit is not enough. A candidate must show a plausible
-    # target role, or multiple directly relevant technologies, before it reaches AI.
+    # target role, or multiple directly relevant technologies, before AI.
     if not role_hits and len(core_tech_hits) < 2:
         return 0
 
@@ -232,8 +222,7 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     if location_hard_mismatch:
         return 0
 
-    education_text = f"{title} {description}"
-    education_points, education_hard_mismatch = _education_score(education_text)
+    education_points, education_hard_mismatch = _education_score(f"{title} {description}")
     if education_hard_mismatch:
         return 0
 
@@ -315,7 +304,15 @@ def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> 
     return gemini_verdict, False
 
 
-def review_candidates(listings: list[JobListing]) -> list[JobListing]:
+def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
+    """Review up to the configured candidate pool.
+
+    ``deadline`` is retained for backward compatibility with the earlier Phase 1
+    call path, but the short 20-minute cutoff is intentionally disabled so it
+    cannot reduce job coverage. The GitHub Actions job timeout remains the final
+    external safety boundary until runtime optimization is addressed separately.
+    """
+    _ = deadline
     passed = []
     consecutive_failures = 0
     gemini_confirmed_exhausted = False
