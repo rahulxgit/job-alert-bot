@@ -1,3 +1,4 @@
+import os
 import json
 import re
 import time
@@ -19,6 +20,8 @@ _gemini = GeminiProvider()
 _gateway = GatewayProvider()
 _candidate_profile = None
 FAILED_AI_JOBS_PATH = Path("failed-ai-jobs.json")
+AI_PROGRESS_PATH = Path("run-artifacts/ai-progress.json")
+AI_PROGRESS_VERSION = 1
 AI_MAX_ATTEMPTS_PER_CANDIDATE = max(1, int(getattr(config, "AI_EVALUATION_MAX_ATTEMPTS_PER_CANDIDATE", 3)))
 AI_RETRY_DELAY_SECONDS = max(1.0, float(getattr(config, "AI_EVALUATION_RETRY_DELAY_SECONDS", 15)))
 AI_MAX_RETRY_DELAY_SECONDS = max(AI_RETRY_DELAY_SECONDS, float(getattr(config, "AI_EVALUATION_MAX_RETRY_DELAY_SECONDS", 60)))
@@ -304,6 +307,43 @@ def _save_failed_ai_jobs(jobs: list[JobListing]) -> None:
     log.info("AI retry queue persisted: %s unresolved jobs", len(jobs))
 
 
+def _load_ai_progress() -> dict:
+    path = AI_PROGRESS_PATH
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("version") != AI_PROGRESS_VERSION:
+            return {}
+        if payload.get("status") == "completed":
+            return {}
+        return payload
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        log.warning("Could not load AI progress checkpoint: %s", exc)
+        return {}
+
+
+def _save_ai_progress(progress: dict) -> None:
+    path = AI_PROGRESS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    progress["version"] = AI_PROGRESS_VERSION
+    progress["updated_at"] = datetime.now(timezone.utc).isoformat()
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(progress, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def _job_from_dict(data: dict) -> JobListing | None:
+    if not isinstance(data, dict):
+        return None
+    allowed = {field.name for field in fields(JobListing)}
+    filtered = {key: value for key, value in data.items() if key in allowed}
+    try:
+        return JobListing(**filtered)
+    except (TypeError, ValueError):
+        return None
+
+
 def _apply_verdict(listing: JobListing, verdict: FitVerdict) -> bool:
     exp_info = _parse_experience(listing.description or "")
     if not exp_info["eligible_for_rahul"]:
@@ -366,27 +406,65 @@ def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> 
 
 
 def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
-    """Review all selected jobs, retrying unresolved jobs across workflow runs."""
+    """Review selected jobs with per-candidate checkpoints and cross-run resume support."""
     _ = deadline
     retry_jobs = _load_failed_ai_jobs()
     retry_urls = {job.job_url for job in retry_jobs}
-    current_jobs = [job for job in listings if job.job_url not in retry_urls]
-    ordered_jobs = retry_jobs + current_jobs[:config.MAX_LLM_CANDIDATES]
+    progress = _load_ai_progress()
+    evaluated_data = progress.get("evaluated_jobs", {}) if isinstance(progress.get("evaluated_jobs", {}), dict) else {}
+    restored_jobs = {}
+    for url, data in evaluated_data.items():
+        job = _job_from_dict(data)
+        if job and url:
+            restored_jobs[url] = job
 
-    passed = []
-    failed = []
-    total = len(ordered_jobs)
-    log.info("AI evaluation queue: %s previous failures + %s new candidates", len(retry_jobs), len(current_jobs[:config.MAX_LLM_CANDIDATES]))
+    current_by_url = {job.job_url: job for job in listings if job.job_url}
+    resumed_jobs = [current_by_url[url] if url in current_by_url else job for url, job in restored_jobs.items() if url in current_by_url]
+    resumed_urls = {job.job_url for job in resumed_jobs}
+    current_jobs = [job for job in listings if job.job_url not in retry_urls and job.job_url not in resumed_urls]
+    new_jobs = current_jobs[:config.MAX_LLM_CANDIDATES]
+    ordered_jobs = retry_jobs + new_jobs
+
+    passed = [job for job in resumed_jobs if job.fit_score >= config.LLM_FIT_THRESHOLD and job.fresher_appropriate]
+    failed = list(retry_jobs)
+    failed_urls = {job.job_url for job in failed}
+    progress = progress if progress else {"version": AI_PROGRESS_VERSION, "status": "in_progress", "candidate_urls": [], "evaluated_jobs": {}, "started_at": datetime.now(timezone.utc).isoformat()}
+    progress["status"] = "in_progress"
+    progress["candidate_urls"] = [job.job_url for job in ordered_jobs]
+    progress["evaluated_jobs"] = {**evaluated_data, **{job.job_url: job.to_dict() for job in resumed_jobs}}
+    progress["evaluated_count"] = len(progress["evaluated_jobs"])
+    progress["total_candidates"] = len(ordered_jobs) + len(resumed_jobs)
+    _save_ai_progress(progress)
+
+    log.info("AI evaluation queue: %s retry jobs + %s new candidates + %s resumed completed jobs", len(retry_jobs), len(new_jobs), len(resumed_jobs))
 
     for index, listing in enumerate(ordered_jobs, start=1):
-        log.info("Evaluating candidate %s/%s: %s", index, total, listing.title)
+        log.info("Evaluating candidate %s/%s: %s", index, len(ordered_jobs), listing.title)
         verdict, unresolved = evaluate_listing(listing)
         if unresolved or verdict is None:
-            failed.append(listing)
+            if listing.job_url not in failed_urls:
+                failed.append(listing)
+                failed_urls.add(listing.job_url)
+            progress["failed_urls"] = sorted(failed_urls)
+            _save_failed_ai_jobs(failed)
+            _save_ai_progress(progress)
             continue
-        if _apply_verdict(listing, verdict):
+
+        failed = [job for job in failed if job.job_url != listing.job_url]
+        failed_urls.discard(listing.job_url)
+        _apply_verdict(listing, verdict)
+        progress["evaluated_jobs"][listing.job_url] = listing.to_dict()
+        progress["evaluated_count"] = len(progress["evaluated_jobs"])
+        progress["failed_urls"] = sorted(failed_urls)
+        if listing.fit_score >= config.LLM_FIT_THRESHOLD and listing.fresher_appropriate:
             passed.append(listing)
 
+        _save_failed_ai_jobs(failed)
+        _save_ai_progress(progress)
+
+    progress["status"] = "completed"
+    progress["completed_at"] = datetime.now(timezone.utc).isoformat()
     _save_failed_ai_jobs(failed)
+    _save_ai_progress(progress)
     passed.sort(key=lambda l: l.fit_score, reverse=True)
     return passed
