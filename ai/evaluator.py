@@ -243,9 +243,6 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     score += education_points
     score += freshness_points
 
-    if any(comp in full_text for comp in config.PRIORITY_COMPANIES):
-        score += 3
-
     from utils.text import extract_email_from_text
     if extract_email_from_text(description):
         score += 1
