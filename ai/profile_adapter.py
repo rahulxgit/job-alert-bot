@@ -87,8 +87,10 @@ def _section(title: str, value: Any) -> list[str]:
     return [f"\n## {title}\n{json.dumps(value, ensure_ascii=False, indent=2)}"]
 
 
-def get_full_profile_text() -> str:
-    data = build_structured_profile()
+def get_full_profile_text(data: dict[str, Any] | None = None) -> str:
+    """Serialize the canonical profile into complete model context."""
+    if data is None:
+        data = build_structured_profile()
     section_specs = [
         ("Identity & Career Stage", {"identity", "career_stage", "personal_identity"}),
         ("Contact & Public Profiles", {"contact", "public_profiles"}),
@@ -110,10 +112,15 @@ def get_full_profile_text() -> str:
     ]
 
     selected = [(title, _find_alias_value(data, aliases)) for title, aliases in section_specs]
-    remaining = {
-        key: value for key, value in data.items()
-        if key not in {"_meta", "privacy", "identity", "contact", "location", "professional_profile", "career_objective", "education", "experience", "projects", "leadership", "achievements", "job_preferences", "about_narrative"}
+    excluded_top_level = {
+        "_meta", "privacy", "identity", "contact", "location", "professional_profile", "career_objective",
+        "education", "experience", "skills", "technical_skills", "technical_profile", "technical_stack",
+        "skillset", "technologies", "ai_engineering", "projects", "project_portfolio", "project_experience",
+        "leadership", "achievements", "competitive_programming", "job_preferences", "application_content",
+        "application_profile", "application_context", "resume_context", "cover_letter", "motivation",
+        "about_narrative",
     }
+    remaining = {key: value for key, value in data.items() if key not in excluded_top_level}
     selected.append(("Additional Master-Profile Data", remaining))
 
     lines = [
@@ -128,6 +135,7 @@ def get_full_profile_text() -> str:
 def build_structured_profile() -> dict[str, Any]:
     data = _sanitize_for_matching(load_canonical_profile())
     assert isinstance(data, dict)
+    data["raw_text"] = get_full_profile_text(data)
     return data
 
 
