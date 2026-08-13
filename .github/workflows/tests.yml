@@ -28,4 +28,6 @@ jobs:
         run: crawl4ai-setup
 
       - name: Run tests
-        run: pytest -q
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q
