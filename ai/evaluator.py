@@ -286,40 +286,59 @@ def prefilter(listings: list[JobListing]) -> list[JobListing]:
 
 
 def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> tuple:
-    """Attempt evaluation for this job; provider degradation must not skip the job."""
+    """Keep retrying this candidate until one provider returns a verdict."""
     prompt = _build_prompt(listing)
+    retry_delay = float(getattr(config, "AI_EVALUATION_RETRY_DELAY_SECONDS", 15))
+    max_retry_delay = float(getattr(config, "AI_EVALUATION_MAX_RETRY_DELAY_SECONDS", 60))
+    consecutive_attempts = 0
 
-    verdict = _gateway.evaluate(prompt)
-    if verdict is not None:
-        return verdict, False
+    while True:
+        consecutive_attempts += 1
 
-    log.warning("gateway unavailable for '%s' — falling back to Gemini", listing.title)
-    gemini_verdict = _gemini.evaluate(prompt, skip_retries=skip_gemini_retries)
-    if gemini_verdict.hit_rate_limit:
-        return gemini_verdict, True
-    if gemini_verdict.reason == "evaluation failed":
-        return FitVerdict(reason="all LLM providers failed — not evaluated"), False
-    return gemini_verdict, False
+        verdict = _gateway.evaluate(prompt)
+        if verdict is not None:
+            return verdict, False
+
+        log.warning(
+            "AI Gateway unavailable for '%s' (attempt %s); falling back to Gemini",
+            listing.title,
+            consecutive_attempts,
+        )
+        gemini_verdict = _gemini.evaluate(prompt, skip_retries=skip_gemini_retries)
+
+        if not gemini_verdict.hit_rate_limit and gemini_verdict.reason != "evaluation failed":
+            return gemini_verdict, False
+
+        if gemini_verdict.hit_rate_limit:
+            log.warning(
+                "Gemini rate limited for '%s' (attempt %s); retrying the SAME candidate before continuing",
+                listing.title,
+                consecutive_attempts,
+            )
+        else:
+            log.warning(
+                "Both AI providers failed for '%s' (attempt %s); retrying the SAME candidate",
+                listing.title,
+                consecutive_attempts,
+            )
+
+        time.sleep(retry_delay)
+        retry_delay = min(max_retry_delay, max(1.0, retry_delay * 2))
 
 
 def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
     """Review every selected candidate without an artificial short deadline or failure breaker."""
     _ = deadline
     passed = []
-    gemini_confirmed_exhausted = False
 
     for index, listing in enumerate(listings[: config.MAX_LLM_CANDIDATES], start=1):
-        verdict, gemini_hit_rate_limit = evaluate_listing(
-            listing,
-            skip_gemini_retries=gemini_confirmed_exhausted,
+        log.info(
+            "Evaluating candidate %s/%s: %s",
+            index,
+            min(len(listings), config.MAX_LLM_CANDIDATES),
+            listing.title,
         )
-        if gemini_hit_rate_limit:
-            gemini_confirmed_exhausted = True
-            log.warning(
-                "Gemini rate limit on candidate %s/%s; next candidate will retry without backoff rather than skip evaluation.",
-                index,
-                min(len(listings), config.MAX_LLM_CANDIDATES),
-            )
+        verdict, _gemini_hit_rate_limit = evaluate_listing(listing)
 
         exp_info = _parse_experience(listing.description or "")
         if not exp_info["eligible_for_rahul"]:
