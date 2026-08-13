@@ -14,8 +14,6 @@ log = get_logger("evaluator")
 _gemini = GeminiProvider()
 _gateway = GatewayProvider()
 _candidate_profile = None
-_gateway_disabled_until = 0.0
-_gemini_disabled_until = 0.0
 
 
 def _profile() -> str:
@@ -288,31 +286,16 @@ def prefilter(listings: list[JobListing]) -> list[JobListing]:
 
 
 def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> tuple:
-    global _gateway_disabled_until, _gemini_disabled_until
-
+    """Attempt evaluation for this job; provider degradation must not skip the job."""
     prompt = _build_prompt(listing)
-    now = time.monotonic()
 
-    if now < _gateway_disabled_until:
-        log.info("AI Gateway circuit open; skipping gateway for '%s'", listing.title)
-    else:
-        verdict = _gateway.evaluate(prompt)
-        if verdict is not None:
-            return verdict, False
-        _gateway_disabled_until = time.monotonic() + config.AI_GATEWAY_RETRY_DELAY_SECONDS
-        log.warning("gateway unavailable for '%s' — opening short gateway circuit and falling back", listing.title)
+    verdict = _gateway.evaluate(prompt)
+    if verdict is not None:
+        return verdict, False
 
-    if time.monotonic() < _gemini_disabled_until:
-        return FitVerdict(reason="all LLM providers unavailable — not evaluated"), False
-
-    log.warning("falling back to Gemini for '%s'", listing.title)
+    log.warning("gateway unavailable for '%s' — falling back to Gemini", listing.title)
     gemini_verdict = _gemini.evaluate(prompt, skip_retries=skip_gemini_retries)
     if gemini_verdict.hit_rate_limit:
-        _gemini_disabled_until = time.monotonic() + config.GEMINI_QUOTA_COOLDOWN_SECONDS
-        log.warning(
-            "Gemini rate limit confirmed; opening Gemini circuit for %ss",
-            config.GEMINI_QUOTA_COOLDOWN_SECONDS,
-        )
         return gemini_verdict, True
     if gemini_verdict.reason == "evaluation failed":
         return FitVerdict(reason="all LLM providers failed — not evaluated"), False
@@ -320,20 +303,23 @@ def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> 
 
 
 def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
-    """Review up to the configured candidate pool without a short artificial deadline."""
+    """Review every selected candidate without an artificial short deadline or failure breaker."""
     _ = deadline
     passed = []
-    consecutive_failures = 0
     gemini_confirmed_exhausted = False
 
-    for listing in listings[: config.MAX_LLM_CANDIDATES]:
+    for index, listing in enumerate(listings[: config.MAX_LLM_CANDIDATES], start=1):
         verdict, gemini_hit_rate_limit = evaluate_listing(
             listing,
             skip_gemini_retries=gemini_confirmed_exhausted,
         )
-        if gemini_hit_rate_limit and not gemini_confirmed_exhausted:
+        if gemini_hit_rate_limit:
             gemini_confirmed_exhausted = True
-            log.info("Gemini quota confirmed exhausted for this run — skipping retry waits thereafter")
+            log.warning(
+                "Gemini rate limit on candidate %s/%s; next candidate will retry without backoff rather than skip evaluation.",
+                index,
+                min(len(listings), config.MAX_LLM_CANDIDATES),
+            )
 
         exp_info = _parse_experience(listing.description or "")
         if not exp_info["eligible_for_rahul"]:
@@ -376,18 +362,6 @@ def review_candidates(listings: list[JobListing], deadline: float | None = None)
             listing.fit_tier = "Reasonable"
         else:
             listing.fit_tier = "Weak"
-
-        if getattr(verdict, "reason", "") == "all LLM providers failed — not evaluated":
-            consecutive_failures += 1
-        else:
-            consecutive_failures = 0
-
-        if consecutive_failures >= config.CONSECUTIVE_RATE_LIMIT_BREAKER:
-            log.warning(
-                "%s consecutive LLM failures — stopping to protect the run budget",
-                config.CONSECUTIVE_RATE_LIMIT_BREAKER,
-            )
-            break
 
         if listing.fit_score >= config.LLM_FIT_THRESHOLD and listing.fresher_appropriate:
             passed.append(listing)
