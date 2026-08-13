@@ -1,6 +1,7 @@
 """Shared data models used across the whole pipeline."""
 from dataclasses import dataclass, field, asdict
 
+
 @dataclass
 class JobListing:
     """One job/internship candidate, regardless of which source found it."""
@@ -21,6 +22,8 @@ class JobListing:
     # optional metadata
     posting_date: str = ""
     employment_type: str = ""
+    company_confidence: str = "unknown"
+    freshness_confidence: str = "unknown"
 
     # structured matching dimensions
     role_match: int = 0
@@ -36,6 +39,7 @@ class JobListing:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
 
 @dataclass
 class FitVerdict:
