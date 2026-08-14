@@ -1,4 +1,4 @@
-"""Thread-safe AI evaluation metrics and checkpoint coordination primitives."""
+"""Thread-safe AI evaluation metrics and serialized checkpoint writes."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -41,14 +41,13 @@ class AIMetrics:
 
 
 class MetricsCoordinator:
-    """Owns mutable metrics and serializes checkpoint writes."""
+    """Owns all mutable AI metrics and serializes checkpoint writes."""
 
     def __init__(self, progress_path: Path, metrics_enabled: bool = True) -> None:
         self.progress_path = progress_path
         self.metrics_enabled = metrics_enabled
         self.metrics = AIMetrics()
         self._lock = Lock()
-        self._pending_result: bool | None = None
 
     def record_candidate_start(self) -> None:
         if not self.metrics_enabled:
@@ -56,72 +55,42 @@ class MetricsCoordinator:
         with self._lock:
             self.metrics.attempted += 1
 
-    def record_worker_result(self, *, passed: bool | None, duration_seconds: float) -> None:
-        if not self.metrics_enabled:
-            return
-        with self._lock:
-            self.metrics.latency_seconds.append(max(0.0, duration_seconds))
-            if passed is None:
-                self.metrics.unresolved += 1
-            else:
-                self.metrics.completed += 1
-                if passed:
-                    self.metrics.passed += 1
-                else:
-                    self.metrics.rejected += 1
-
-    def record_result(self, passed: bool | None) -> None:
-        """Backward-compatible result API used by the evaluator coordinator.
-
-        The evaluator records ``False`` before applying the verdict and, when
-        the verdict passes, immediately records ``True``. We defer a False
-        result until the next result so the final counters stay accurate.
-        """
-        if not self.metrics_enabled:
-            return
-        with self._lock:
-            if passed is None:
-                if self._pending_result is False:
-                    self.metrics.completed += 1
-                    self.metrics.rejected += 1
-                self._pending_result = None
-                self.metrics.unresolved += 1
-                return
-
-            if passed:
-                if self._pending_result is False:
-                    self._pending_result = None
-                self.metrics.completed += 1
-                self.metrics.passed += 1
-                return
-
-            if self._pending_result is False:
-                self.metrics.completed += 1
-                self.metrics.rejected += 1
-            self._pending_result = False
-
     def record_retry(self) -> None:
         if not self.metrics_enabled:
             return
         with self._lock:
             self.metrics.retry_attempts += 1
 
+    def record_candidate_result(self, *, status: str, duration_seconds: float) -> None:
+        """Record exactly one terminal candidate state.
+
+        status is one of PASSED, REJECTED, or UNRESOLVED. This single API keeps
+        evaluator and metrics state aligned and prevents double-counting.
+        """
+        if status not in {"PASSED", "REJECTED", "UNRESOLVED"}:
+            raise ValueError(f"invalid AI candidate status: {status}")
+        if not self.metrics_enabled:
+            return
+        with self._lock:
+            self.metrics.latency_seconds.append(max(0.0, duration_seconds))
+            if status == "UNRESOLVED":
+                self.metrics.unresolved += 1
+            else:
+                self.metrics.completed += 1
+                if status == "PASSED":
+                    self.metrics.passed += 1
+                else:
+                    self.metrics.rejected += 1
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            snapshot = self.metrics.snapshot()
-            if self.metrics_enabled and self._pending_result is False:
-                snapshot["completed"] += 1
-                snapshot["rejected"] += 1
-            return snapshot
+            return self.metrics.snapshot() if self.metrics_enabled else {}
 
     def save_progress(self, progress: dict[str, Any]) -> None:
         """Atomically write progress from the coordinator thread only."""
         self.progress_path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             progress["metrics"] = self.metrics.snapshot() if self.metrics_enabled else {}
-            if self.metrics_enabled and self._pending_result is False:
-                progress["metrics"]["completed"] += 1
-                progress["metrics"]["rejected"] += 1
             progress["updated_at"] = datetime.now(timezone.utc).isoformat()
             tmp_path = self.progress_path.with_suffix(".tmp")
             tmp_path.write_text(json.dumps(progress, ensure_ascii=False, indent=2), encoding="utf-8")
