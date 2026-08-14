@@ -2,6 +2,7 @@ import os
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ from models import FitVerdict, JobListing
 from ai.gemini_provider import GeminiProvider
 from ai.gateway_provider import GatewayProvider
 from ai.profile import build_candidate_profile
+from ai.metrics import MetricsCoordinator
 from utils.logging_setup import get_logger
 
 log = get_logger("evaluator")
@@ -387,12 +389,16 @@ def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> 
     delay = AI_RETRY_DELAY_SECONDS
 
     for attempt in range(1, AI_MAX_ATTEMPTS_PER_CANDIDATE + 1):
+        gateway_started = time.monotonic()
         gateway_verdict = _gateway.evaluate(prompt)
+        gateway_latency = time.monotonic() - gateway_started
         if gateway_verdict is not None:
             return gateway_verdict, False
 
         log.warning("AI Gateway unavailable for '%s' on attempt %s; trying Gemini", listing.title, attempt)
+        gemini_started = time.monotonic()
         gemini_verdict = _gemini.evaluate(prompt, skip_retries=skip_gemini_retries or attempt > 1)
+        _ = gemini_started, gateway_latency
         if not gemini_verdict.hit_rate_limit and gemini_verdict.reason != "evaluation failed":
             return gemini_verdict, False
 
@@ -406,7 +412,7 @@ def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> 
 
 
 def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
-    """Review selected jobs with per-candidate checkpoints and cross-run resume support."""
+    """Review selected jobs concurrently while keeping checkpoint writes serialized."""
     _ = deadline
     retry_jobs = _load_failed_ai_jobs()
     retry_urls = {job.job_url for job in retry_jobs}
@@ -434,37 +440,62 @@ def review_candidates(listings: list[JobListing], deadline: float | None = None)
     progress["evaluated_jobs"] = {**evaluated_data, **{job.job_url: job.to_dict() for job in resumed_jobs}}
     progress["evaluated_count"] = len(progress["evaluated_jobs"])
     progress["total_candidates"] = len(ordered_jobs) + len(resumed_jobs)
-    _save_ai_progress(progress)
 
-    log.info("AI evaluation queue: %s retry jobs + %s new candidates + %s resumed completed jobs", len(retry_jobs), len(new_jobs), len(resumed_jobs))
+    coordinator = MetricsCoordinator(AI_PROGRESS_PATH, metrics_enabled=getattr(config, "AI_METRICS_ENABLED", True))
+    coordinator.save_progress(progress)
+    log.info("AI evaluation queue: %s retry jobs + %s new candidates + %s resumed completed jobs; concurrency=%s", len(retry_jobs), len(new_jobs), len(resumed_jobs), config.AI_MAX_CONCURRENCY)
 
-    for index, listing in enumerate(ordered_jobs, start=1):
-        log.info("Evaluating candidate %s/%s: %s", index, len(ordered_jobs), listing.title)
+    def worker(listing: JobListing) -> tuple[JobListing, FitVerdict | None, bool, float]:
+        started = time.monotonic()
+        coordinator.record_candidate_start()
         verdict, unresolved = evaluate_listing(listing)
-        if unresolved or verdict is None:
-            if listing.job_url not in failed_urls:
-                failed.append(listing)
-                failed_urls.add(listing.job_url)
-            progress["failed_urls"] = sorted(failed_urls)
+        return listing, verdict, unresolved, time.monotonic() - started
+
+    with ThreadPoolExecutor(max_workers=config.AI_MAX_CONCURRENCY, thread_name_prefix="ai-review") as executor:
+        futures = {executor.submit(worker, listing): listing for listing in ordered_jobs}
+        for future in as_completed(futures):
+            listing = futures[future]
+            try:
+                listing, verdict, unresolved, duration = future.result()
+            except Exception as exc:
+                log.exception("AI worker crashed for '%s': %s", listing.title, exc)
+                verdict, unresolved, duration = None, True, 0.0
+
+            if unresolved or verdict is None:
+                coordinator.record_result(passed=None)
+                if listing.job_url not in failed_urls:
+                    failed.append(listing)
+                    failed_urls.add(listing.job_url)
+                progress["failed_urls"] = sorted(failed_urls)
+            else:
+                coordinator.record_result(passed=False)
+                failed = [job for job in failed if job.job_url != listing.job_url]
+                failed_urls.discard(listing.job_url)
+                passed_flag = _apply_verdict(listing, verdict)
+                if passed_flag:
+                    passed.append(listing)
+                    coordinator.metrics.passed = max(0, coordinator.metrics.passed - 1)
+                    coordinator.metrics.rejected = max(0, coordinator.metrics.rejected - 1)
+                    coordinator.record_result(passed=True)
+                progress["evaluated_jobs"][listing.job_url] = listing.to_dict()
+                progress["evaluated_count"] = len(progress["evaluated_jobs"])
+                progress["failed_urls"] = sorted(failed_urls)
+            if coordinator.metrics_enabled:
+                with coordinator._lock:
+                    coordinator.metrics.latency_seconds.append(max(0.0, duration))
+
             _save_failed_ai_jobs(failed)
-            _save_ai_progress(progress)
-            continue
-
-        failed = [job for job in failed if job.job_url != listing.job_url]
-        failed_urls.discard(listing.job_url)
-        _apply_verdict(listing, verdict)
-        progress["evaluated_jobs"][listing.job_url] = listing.to_dict()
-        progress["evaluated_count"] = len(progress["evaluated_jobs"])
-        progress["failed_urls"] = sorted(failed_urls)
-        if listing.fit_score >= config.LLM_FIT_THRESHOLD and listing.fresher_appropriate:
-            passed.append(listing)
-
-        _save_failed_ai_jobs(failed)
-        _save_ai_progress(progress)
+            coordinator.save_progress(progress)
 
     progress["status"] = "completed"
     progress["completed_at"] = datetime.now(timezone.utc).isoformat()
+    progress["metrics"] = coordinator.snapshot()
     _save_failed_ai_jobs(failed)
-    _save_ai_progress(progress)
+    coordinator.save_progress(progress)
+    try:
+        Path("run-artifacts").mkdir(parents=True, exist_ok=True)
+        Path("run-artifacts/ai-metrics.json").write_text(json.dumps(coordinator.snapshot(), ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:
+        log.warning("Could not write AI metrics artifact: %s", exc)
     passed.sort(key=lambda l: l.fit_score, reverse=True)
     return passed
