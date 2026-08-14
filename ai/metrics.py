@@ -1,7 +1,6 @@
 """Thread-safe AI evaluation metrics and checkpoint coordination primitives."""
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +8,6 @@ from threading import Lock
 from typing import Any
 import json
 import os
-import time
 
 
 @dataclass
@@ -19,28 +17,8 @@ class AIMetrics:
     unresolved: int = 0
     passed: int = 0
     rejected: int = 0
-    gateway_success: int = 0
-    gateway_failure: int = 0
-    gemini_success: int = 0
-    gemini_rate_limited: int = 0
-    provider_failures: int = 0
     retry_attempts: int = 0
     latency_seconds: list[float] = field(default_factory=list)
-    provider_latency_seconds: Counter = field(default_factory=Counter)
-
-    def record_attempt(self) -> None:
-        self.attempted += 1
-
-    def record_completion(self, passed: bool) -> None:
-        self.completed += 1
-        if passed:
-            self.passed += 1
-        else:
-            self.rejected += 1
-
-    def record_unresolved(self) -> None:
-        self.unresolved += 1
-        self.provider_failures += 1
 
     def snapshot(self) -> dict[str, Any]:
         latencies = sorted(self.latency_seconds)
@@ -56,11 +34,6 @@ class AIMetrics:
             "unresolved": self.unresolved,
             "passed": self.passed,
             "rejected": self.rejected,
-            "gateway_success": self.gateway_success,
-            "gateway_failure": self.gateway_failure,
-            "gemini_success": self.gemini_success,
-            "gemini_rate_limited": self.gemini_rate_limited,
-            "provider_failures": self.provider_failures,
             "retry_attempts": self.retry_attempts,
             "average_latency_seconds": round(avg, 3),
             "p95_latency_seconds": round(p95, 3),
@@ -80,39 +53,27 @@ class MetricsCoordinator:
         if not self.metrics_enabled:
             return
         with self._lock:
-            self.metrics.record_attempt()
+            self.metrics.attempted += 1
 
-    def record_provider_event(self, provider: str, success: bool, latency_seconds: float, *, rate_limited: bool = False) -> None:
+    def record_worker_result(self, *, passed: bool | None, duration_seconds: float) -> None:
         if not self.metrics_enabled:
             return
         with self._lock:
-            self.metrics.latency_seconds.append(max(0.0, latency_seconds))
-            self.metrics.provider_latency_seconds[provider] += max(0.0, latency_seconds)
-            if provider == "gateway":
-                if success:
-                    self.metrics.gateway_success += 1
+            self.metrics.latency_seconds.append(max(0.0, duration_seconds))
+            if passed is None:
+                self.metrics.unresolved += 1
+            else:
+                self.metrics.completed += 1
+                if passed:
+                    self.metrics.passed += 1
                 else:
-                    self.metrics.gateway_failure += 1
-            elif provider == "gemini":
-                if success:
-                    self.metrics.gemini_success += 1
-                if rate_limited:
-                    self.metrics.gemini_rate_limited += 1
+                    self.metrics.rejected += 1
 
     def record_retry(self) -> None:
         if not self.metrics_enabled:
             return
         with self._lock:
             self.metrics.retry_attempts += 1
-
-    def record_result(self, *, passed: bool | None) -> None:
-        if not self.metrics_enabled:
-            return
-        with self._lock:
-            if passed is None:
-                self.metrics.record_unresolved()
-            else:
-                self.metrics.record_completion(passed)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
