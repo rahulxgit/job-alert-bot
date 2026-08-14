@@ -1,7 +1,7 @@
 """Shared provider backoff state used by concurrent AI workers."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Lock
 import time
 
@@ -10,14 +10,25 @@ import time
 class ProviderBackoff:
     """Thread-safe cooldown state for a single provider."""
 
-    _lock: Lock = Lock()
+    _lock: Lock = field(default_factory=Lock)
     _until: float = 0.0
 
-    def wait_if_needed(self) -> None:
+    def wait_if_needed(self, deadline: float | None = None) -> bool:
+        """Wait for cooldown without sleeping past an optional deadline.
+
+        Returns False when the deadline has already been reached; existing
+        callers that ignore the return value retain the previous behavior.
+        """
         with self._lock:
             remaining = self._until - time.monotonic()
+        if remaining <= 0:
+            return deadline is None or time.monotonic() < deadline
+
+        if deadline is not None:
+            remaining = min(remaining, max(0.0, deadline - time.monotonic()))
         if remaining > 0:
             time.sleep(remaining)
+        return deadline is None or time.monotonic() < deadline
 
     def activate(self, seconds: float) -> None:
         if seconds <= 0:

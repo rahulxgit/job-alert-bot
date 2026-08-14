@@ -13,7 +13,8 @@ concurrency:
 jobs:
   run-job-search:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # The workflow has explicit stage budgets; this is only the final safety net.
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repo
@@ -52,6 +53,16 @@ jobs:
           restore-keys: |
             failed-ai-jobs-
 
+      - name: Cache Crawl4AI browser binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/patchright
+          key: crawl4ai-browsers-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            crawl4ai-browsers-${{ runner.os }}-py311-
+
       - name: Install Crawl4AI browser
         run: crawl4ai-setup
 
@@ -72,9 +83,17 @@ jobs:
           FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
           FIRECRAWL_ENABLED: "false"
           CRAWL4AI_DISCOVERY_ENABLED: "true"
+          CRAWL4AI_DISCOVERY_MAX_SEEDS: "12"
+          CRAWL4AI_DISCOVERY_SEED_CONCURRENCY: "3"
+          CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED: "true"
+          CRAWL4AI_DISCOVERY_HEALTHCHECK_URL: "https://example.com/"
           JOBSPY_MAX_COMBINATIONS: "24"
+          JOBSPY_MAX_CONCURRENCY: "4"
           JOBSPY_RESULTS_PER_SITE: "15"
           JOBSPY_CALL_TIMEOUT_SECONDS: "60"
+          LLM_EVALUATION_BUDGET_SECONDS: "2700"
+          SOURCE_406_BREAKER_THRESHOLD: "3"
+          SOURCE_404_BREAKER_THRESHOLD: "10"
           CRAWL_PROVIDER: "auto"
           CRAWL4AI_TIMEOUT: "30"
           CRAWL4AI_MAX_DETAIL_PAGES: "25"

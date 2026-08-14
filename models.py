@@ -1,6 +1,16 @@
 """Shared data models used across the whole pipeline."""
 from dataclasses import dataclass, field, asdict
 
+
+def _normalize_text(value) -> str:
+    """Normalize source-provided scalar/list values into safe text fields."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(item).strip() for item in value if item is not None and str(item).strip())
+    return str(value)
+
+
 @dataclass
 class JobListing:
     """One job/internship candidate, regardless of which source found it."""
@@ -34,8 +44,24 @@ class JobListing:
     fit_tier: str = ""
     gaps: list[str] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        # External job sources occasionally return list-valued location/company
+        # fields. Normalize at the model boundary so one malformed listing
+        # cannot crash downstream scoring or AI prompt construction.
+        self.job_url = _normalize_text(self.job_url).strip()
+        self.title = _normalize_text(self.title).strip()
+        self.company = _normalize_text(self.company).strip()
+        self.location = _normalize_text(self.location).strip() or "India"
+        self.description = _normalize_text(self.description)
+        self.source = _normalize_text(self.source).strip() or "Unknown"
+        self.posting_date = _normalize_text(self.posting_date).strip()
+        self.employment_type = _normalize_text(self.employment_type).strip()
+        self.reason = _normalize_text(self.reason)
+        self.recruiter_email = _normalize_text(self.recruiter_email).strip()
+
     def to_dict(self) -> dict:
         return asdict(self)
+
 
 @dataclass
 class FitVerdict:

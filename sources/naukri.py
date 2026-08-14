@@ -3,6 +3,7 @@ Not officially documented or supported; the most fragile source in this
 project. Naukri can change required headers, rate-limit harder, or
 restructure the response at any time. If this consistently returns 0,
 that's most likely the culprit, not a bug elsewhere."""
+import os
 import time
 import requests
 
@@ -33,49 +34,50 @@ class NaukriSource(JobSource):
             "systemid": "Naukri",
             "clientid": "d3skt0p",
         }
-        # Naukri actively fingerprints requests missing the headers above.
-        # This closes the gap between "obviously a script" and "looks like
-        # a browser tab", but it still 406s from datacenter IPs (GitHub
-        # Actions) fairly often — that's IP reputation, not headers, and
-        # isn't fixable without a residential proxy. Treat 0 here the same
-        # way Wellfound is already treated: expected, not a bug.
+        breaker_threshold = max(1, int(os.environ.get("SOURCE_406_BREAKER_THRESHOLD", "3")))
+        consecutive_block_failures = 0
 
         for term in config.NAUKRI_SEARCH_TERMS:
+            if consecutive_block_failures >= breaker_threshold:
+                log.warning(
+                    "Naukri circuit breaker opened after %s consecutive 406 responses; "
+                    "skipping remaining queries for this run",
+                    consecutive_block_failures,
+                )
+                break
+
             params = {
                 "noOfResults": 20, "urlType": "search_by_key_loc", "searchType": "adv",
                 "keyword": term, "location": "bangalore", "k": term, "l": "bangalore",
                 "experience": 0,
             }
             try:
-                resp = requests.get("https://www.naukri.com/jobapi/v3/search", headers=headers, params=params, timeout=15)
+                resp = requests.get(
+                    "https://www.naukri.com/jobapi/v3/search",
+                    headers=headers,
+                    params=params,
+                    timeout=15,
+                )
                 resp.raise_for_status()
                 data = resp.json()
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 406:
-                    log.warning(f"fetch failed for '{term}' (406 Not Acceptable). Firecrawl will be used as a fallback.")
+                consecutive_block_failures = 0
+            except requests.exceptions.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status == 406:
+                    consecutive_block_failures += 1
+                    log.warning(
+                        "fetch failed for '%s' (406 Not Acceptable), consecutive=%s/%s",
+                        term,
+                        consecutive_block_failures,
+                        breaker_threshold,
+                    )
                 else:
-                    log.warning(f"fetch failed for '{term}': {e}")
-                continue
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 406:
-                    log.warning(f"fetch failed for '{term}' (406 Not Acceptable). Firecrawl will be used as a fallback.")
-                else:
-                    log.warning(f"fetch failed for '{term}': {e}")
-                continue
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 406:
-                    log.warning(f"fetch failed for '{term}' (406 Not Acceptable). Firecrawl will be used as a fallback.")
-                else:
-                    log.warning(f"fetch failed for '{term}': {e}")
-                continue
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 406:
-                    log.warning(f"fetch failed for '{term}' (406 Not Acceptable). Firecrawl will be used as a fallback.")
-                else:
-                    log.warning(f"fetch failed for '{term}': {e}")
+                    consecutive_block_failures = 0
+                    log.warning("fetch failed for '%s': %s", term, exc)
                 continue
             except Exception as exc:
-                log.warning(f"fetch failed for '{term}': {exc}")
+                consecutive_block_failures = 0
+                log.warning("fetch failed for '%s': %s", term, exc)
                 continue
 
             for job in data.get("jobDetails", []):

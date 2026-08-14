@@ -95,15 +95,29 @@ CRAWL4AI_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_MAX_DETAIL_PAGES", "25"
 CRAWL4AI_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_MIN_DESCRIPTION_CHARS", "300"))
 CRAWL4AI_DISCOVERY_ENABLED = os.environ.get("CRAWL4AI_DISCOVERY_ENABLED", "false").lower() == "true"
 CRAWL4AI_DISCOVERY_TIMEOUT = int(os.environ.get("CRAWL4AI_DISCOVERY_TIMEOUT", "20"))
-CRAWL4AI_DISCOVERY_MAX_SEEDS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_SEEDS", "3"))
+CRAWL4AI_DISCOVERY_MAX_SEEDS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_SEEDS", "12"))
 CRAWL4AI_DISCOVERY_MAX_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_PAGES", "20"))
 CRAWL4AI_DISCOVERY_MAX_DEPTH = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DEPTH", "2"))
 CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES", "12"))
 CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS", "400"))
 CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS", "6000"))
 CRAWL4AI_DISCOVERY_LOCATIONS = ["Bengaluru", "Bangalore", "Pune", "Hyderabad", "Gurugram", "Gurgaon", "Noida", "Delhi NCR", "Mumbai", "Chennai", "Kolkata", "Ahmedabad", "Remote", "India"]
-CRAWL4AI_DISCOVERY_SEED_URLS = ["https://boards.greenhouse.io/", "https://jobs.lever.co/", "https://jobs.ashbyhq.com/"]
-CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS = ["boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com"]
+CRAWL4AI_DISCOVERY_SEED_URLS = [
+    "https://boards.greenhouse.io/", "https://jobs.lever.co/", "https://jobs.ashbyhq.com/",
+    "https://www.naukri.com/", "https://internshala.com/jobs/", "https://wellfound.com/jobs",
+    "https://www.linkedin.com/jobs/", "https://www.indeed.com/jobs", "https://www.ycombinator.com/jobs",
+    "https://cutshort.io/jobs", "https://www.instahyre.com/", "https://www.hiringcafe.com/",
+]
+CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS = [
+    "boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "naukri.com", "www.naukri.com",
+    "internshala.com", "www.internshala.com", "wellfound.com", "www.wellfound.com",
+    "linkedin.com", "www.linkedin.com", "indeed.com", "www.indeed.com",
+    "ycombinator.com", "www.ycombinator.com", "cutshort.io", "www.cutshort.io",
+    "instahyre.com", "www.instahyre.com", "hiringcafe.com", "www.hiringcafe.com",
+]
+CRAWL4AI_DISCOVERY_SEED_CONCURRENCY = int(os.environ.get("CRAWL4AI_DISCOVERY_SEED_CONCURRENCY", "3"))
+CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED = os.environ.get("CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED", "true").lower() == "true"
+CRAWL4AI_DISCOVERY_HEALTHCHECK_URL = os.environ.get("CRAWL4AI_DISCOVERY_HEALTHCHECK_URL", "https://example.com/")
 
 # --- Canonical master profile -----------------------------------------------
 PROFILE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "rahul-master-profile.json")
@@ -139,7 +153,6 @@ PROFILE_KEYWORDS = [
 FRESHER_SIGNALS = ["sde 1", "sde-1", "sde i", "software development engineer i", "fresher", "0-1 year", "0-2 year", "0 - 2 year", "0-2 yrs", "entry level", "entry-level", "graduate engineer", "graduate trainee", "junior", "campus hire", "new grad", "intern"]
 SENIORITY_EXCLUSIONS = ["senior", "sr.", "sr ", "staff", "principal", "lead", "architect", "manager", "director", "head of", "vp ", "9-12 yr", "6-9 yr", "5-8 yr", "8+ year", "10+ year", "7+ year", "6+ year", "5+ year", "4+ year"]
 
-# Keep the broad AI candidate pool; precision is enforced before the LLM stage.
 MAX_LLM_CANDIDATES = int(os.environ.get("MAX_LLM_CANDIDATES", "300"))
 LLM_FIT_THRESHOLD = 70
 MIN_LIGHTWEIGHT_SCORE = int(os.environ.get("MIN_LIGHTWEIGHT_SCORE", "6"))
@@ -147,48 +160,37 @@ MIN_CANDIDATES_PER_SOURCE = int(os.environ.get("MIN_CANDIDATES_PER_SOURCE", "5")
 CONSECUTIVE_RATE_LIMIT_BREAKER = 5
 
 ROLE_MATCH_TERMS = [
-    "software engineer", "software development engineer", "software developer",
-    "sde", "full stack developer", "full stack engineer", "fullstack developer",
-    "frontend developer", "frontend engineer", "backend developer", "backend engineer",
-    "mern developer", "mern stack developer", "react developer", "react.js developer",
-    "node.js developer", "javascript developer", "typescript developer", "product engineer",
-    "application developer", "associate software engineer", "graduate software engineer",
-    "junior software engineer", "junior developer", "web developer",
+    "software engineer", "software development engineer", "software developer", "sde",
+    "full stack developer", "full stack engineer", "fullstack developer", "frontend developer",
+    "frontend engineer", "backend developer", "backend engineer", "mern developer",
+    "mern stack developer", "react developer", "react.js developer", "node.js developer",
+    "javascript developer", "typescript developer", "product engineer", "application developer",
+    "associate software engineer", "graduate software engineer", "junior software engineer",
+    "junior developer", "web developer",
 ]
 CORE_TECH_TERMS = [
-    "react", "react.js", "reactjs", "node", "node.js", "express", "express.js",
-    "javascript", "typescript", "next.js", "nextjs", "mern", "mongodb", "rest api",
-    "api development", "html", "css", "sql", "postgresql", "mysql", "supabase",
-    "firebase", "redux", "react query", "tailwindcss", "docker", "git", "github",
+    "react", "react.js", "reactjs", "node", "node.js", "express", "express.js", "javascript",
+    "typescript", "next.js", "nextjs", "mern", "mongodb", "rest api", "api development", "html",
+    "css", "sql", "postgresql", "mysql", "supabase", "firebase", "redux", "react query", "tailwindcss",
+    "docker", "git", "github",
 ]
-PREFERRED_LOCATIONS = [
-    "bengaluru", "bangalore", "pune", "hyderabad", "gurgaon", "gurugram", "noida",
-    "delhi ncr", "mumbai", "chennai", "india", "remote", "work from home", "wfh",
-]
-NON_PREFERRED_LOCATION_SIGNALS = [
-    "united states", "usa", "canada", "uk", "united kingdom", "australia", "germany",
-    "france", "singapore", "dubai", "uae", "europe",
-]
+PREFERRED_LOCATIONS = ["bengaluru", "bangalore", "pune", "hyderabad", "gurgaon", "gurugram", "noida", "delhi ncr", "mumbai", "chennai", "india", "remote", "work from home", "wfh"]
+NON_PREFERRED_LOCATION_SIGNALS = ["united states", "usa", "canada", "uk", "united kingdom", "australia", "germany", "france", "singapore", "dubai", "uae", "europe"]
 EDUCATION_HARD_EXCLUSION_SIGNALS = [
-    "b.tech in computer science only", "b.e. in computer science only",
-    "b.e./b.tech in computer science only", "b.e./b.tech in cse only",
-    "b.tech in cse only", "b.tech in information technology only",
-    "b.e./b.tech in cs/it only", "computer science degree required",
-    "computer science or information technology degree required",
+    "b.tech in computer science only", "b.e. in computer science only", "b.e./b.tech in computer science only",
+    "b.e./b.tech in cse only", "b.tech in cse only", "b.tech in information technology only",
+    "b.e./b.tech in cs/it only", "computer science degree required", "computer science or information technology degree required",
     "only candidates with computer science",
 ]
 EDUCATION_OPEN_SIGNALS = [
-    "any engineering branch", "all engineering branches", "any branch",
-    "any degree", "bachelor's degree", "bachelors degree", "engineering degree",
-    "technology or engineering", "computer science or related field",
+    "any engineering branch", "all engineering branches", "any branch", "any degree", "bachelor's degree",
+    "bachelors degree", "engineering degree", "technology or engineering", "computer science or related field",
 ]
 FRESHNESS_DAYS = int(os.environ.get("PREFILTER_FRESHNESS_DAYS", "30"))
 
-# Compatibility ceiling for the existing main.py call path. The scheduled
-# workflow is limited to 55 minutes, so this does not reduce search coverage.
 LLM_EVALUATION_BUDGET_SECONDS = int(os.environ.get("LLM_EVALUATION_BUDGET_SECONDS", "86400"))
 
-# --- AI provider resilience (Phase 2) ---------------------------------------
+# --- AI provider resilience -------------------------------------------------
 AI_GATEWAY_TIMEOUT_SECONDS = int(os.environ.get("AI_GATEWAY_TIMEOUT_SECONDS", "12"))
 AI_GATEWAY_MAX_RETRIES = int(os.environ.get("AI_GATEWAY_MAX_RETRIES", "1"))
 AI_GATEWAY_RETRY_DELAY_SECONDS = float(os.environ.get("AI_GATEWAY_RETRY_DELAY_SECONDS", "2"))
@@ -197,17 +199,17 @@ GEMINI_MAX_RETRIES = int(os.environ.get("GEMINI_MAX_RETRIES", "1"))
 GEMINI_MAX_RETRY_WAIT_SECONDS = int(os.environ.get("GEMINI_MAX_RETRY_WAIT_SECONDS", "10"))
 GEMINI_QUOTA_COOLDOWN_SECONDS = int(os.environ.get("GEMINI_QUOTA_COOLDOWN_SECONDS", "3600"))
 
-# --- AI throughput / observability (Phase 6) --------------------------------
+# --- AI throughput / observability ------------------------------------------
 AI_MAX_CONCURRENCY = max(1, int(os.environ.get("AI_MAX_CONCURRENCY", "4")))
 AI_METRICS_ENABLED = os.environ.get("AI_METRICS_ENABLED", "true").lower() == "true"
 
-# --- AI correctness / provider backpressure (Phase 7) -----------------------
+# --- AI provider backpressure ------------------------------------------------
 GATEWAY_MAX_CONCURRENCY = max(1, int(os.environ.get("GATEWAY_MAX_CONCURRENCY", str(AI_MAX_CONCURRENCY))))
 GEMINI_MAX_CONCURRENCY = max(1, int(os.environ.get("GEMINI_MAX_CONCURRENCY", "2")))
 GEMINI_SHARED_BACKOFF_SECONDS = max(1.0, float(os.environ.get("GEMINI_SHARED_BACKOFF_SECONDS", "10")))
 GATEWAY_SHARED_BACKOFF_SECONDS = max(0.0, float(os.environ.get("GATEWAY_SHARED_BACKOFF_SECONDS", "2")))
 
-# --- AI providers -----------------------------------------------------------
+# --- AI providers ------------------------------------------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash-lite"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"

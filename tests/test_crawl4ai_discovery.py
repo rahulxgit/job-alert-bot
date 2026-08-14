@@ -1,7 +1,8 @@
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import config
 import main
+import sources.crawl4ai_discovery as discovery
 from sources.crawl4ai_discovery import _extract_links, _looks_job_url, _looks_like_job_text, _normalize_url
 
 
@@ -9,12 +10,19 @@ def test_normalize_url_removes_tracking_parameters():
     assert _normalize_url("https://example.com/jobs/1?utm_source=x&ref=abc&page=2") == "https://example.com/jobs/1?page=2"
 
 
-def test_job_url_classifier_accepts_detail_pages_and_rejects_aggregates():
+def test_job_url_classifier_accepts_supported_detail_pages_and_rejects_aggregates():
     assert _looks_job_url("https://boards.greenhouse.io/acme/jobs/123", "Software Engineer")
-    # Unsupported domains are intentionally rejected even when their URL looks job-like.
-    assert _looks_job_url("https://example.com/job/software-engineer-123", "Software Engineer") is False
-    # Lever's public job-detail URL shape is a supported individual job page.
     assert _looks_job_url("https://jobs.lever.co/acme/software-engineer-123", "Software Engineer")
+    assert _looks_job_url("https://naukri.com/job-listings-software-engineer-123", "Software Engineer")
+    assert _looks_job_url("https://internshala.com/job/detail/software-engineer-123", "Software Engineer")
+    assert _looks_job_url("https://wellfound.com/jobs/software-engineer-123", "Software Engineer")
+    assert _looks_job_url("https://www.linkedin.com/jobs/view/123456", "Software Engineer")
+    assert _looks_job_url("https://www.indeed.com/viewjob?jk=abc123", "Software Engineer")
+    assert _looks_job_url("https://www.ycombinator.com/companies/acme/jobs/software-engineer", "Software Engineer")
+    assert _looks_job_url("https://cutshort.io/job/software-engineer-123", "Software Engineer")
+    assert _looks_job_url("https://www.instahyre.com/job/software-engineer-123", "Software Engineer")
+    assert _looks_job_url("https://www.hiringcafe.com/jobs/software-engineer-123", "Software Engineer")
+    assert _looks_job_url("https://example.com/job/software-engineer-123", "Software Engineer") is False
     assert not _looks_job_url("https://boards.greenhouse.io/search?q=software-engineer", "Search results")
 
 
@@ -37,9 +45,46 @@ def test_discovery_can_be_disabled_without_network_calls():
     original = config.CRAWL4AI_DISCOVERY_ENABLED
     config.CRAWL4AI_DISCOVERY_ENABLED = False
     try:
-        from sources.crawl4ai_discovery import Crawl4AIDiscoverySource
         with patch("sources.crawl4ai_discovery.discover_job_listings") as mock_discover:
+            from sources.crawl4ai_discovery import Crawl4AIDiscoverySource
             assert Crawl4AIDiscoverySource().fetch_listings() == []
             mock_discover.assert_not_called()
     finally:
         config.CRAWL4AI_DISCOVERY_ENABLED = original
+
+
+def test_discovery_seed_concurrency_is_configurable(monkeypatch):
+    monkeypatch.setattr(config, "CRAWL4AI_DISCOVERY_SEED_CONCURRENCY", 3)
+    assert config.CRAWL4AI_DISCOVERY_SEED_CONCURRENCY == 3
+
+
+def test_discovery_seeds_run_with_bounded_concurrency(monkeypatch):
+    seeds = [
+        "https://boards.greenhouse.io/",
+        "https://jobs.lever.co/",
+        "https://jobs.ashbyhq.com/",
+    ]
+    monkeypatch.setattr(config, "CRAWL4AI_DISCOVERY_SEED_URLS", seeds)
+    monkeypatch.setattr(config, "CRAWL4AI_DISCOVERY_MAX_SEEDS", 3)
+    monkeypatch.setattr(config, "CRAWL4AI_DISCOVERY_SEED_CONCURRENCY", 3)
+
+    class FakeCrawler:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_seed(crawler, seed, run_config):
+        return seed, [], 1, True
+
+    with patch.object(discovery, "AsyncWebCrawler", return_value=FakeCrawler()):
+        with patch.object(discovery, "_crawl_seed", new=AsyncMock(side_effect=fake_seed)) as mock_seed:
+            rows, metrics = __import__("asyncio").run(discovery._discover())
+
+    assert rows == []
+    assert metrics.seeds_attempted == 3
+    assert metrics.seeds_succeeded == 3
+    assert metrics.seed_failures == 0
+    assert metrics.pages_seen == 3
+    assert mock_seed.await_count == 3

@@ -387,20 +387,52 @@ def _apply_verdict(listing: JobListing, verdict: FitVerdict) -> bool:
     return listing.fit_score >= config.LLM_FIT_THRESHOLD and listing.fresher_appropriate
 
 
-def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> tuple[FitVerdict | None, bool]:
-    """Retry the same candidate while coordinating provider backoff across workers."""
+def _deadline_reached(deadline: float | None) -> bool:
+    return deadline is not None and time.monotonic() >= deadline
+
+
+def _sleep_until(deadline: float | None, seconds: float) -> bool:
+    if seconds <= 0:
+        return not _deadline_reached(deadline)
+    if deadline is None:
+        time.sleep(seconds)
+        return True
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    time.sleep(min(seconds, remaining))
+    return not _deadline_reached(deadline)
+
+
+def evaluate_listing(
+    listing: JobListing,
+    skip_gemini_retries: bool = False,
+    deadline: float | None = None,
+) -> tuple[FitVerdict | None, bool]:
+    """Evaluate one candidate while respecting the shared AI deadline."""
+    if _deadline_reached(deadline):
+        return None, True
+
     prompt = _build_prompt(listing)
     delay = AI_RETRY_DELAY_SECONDS
 
     for attempt in range(1, AI_MAX_ATTEMPTS_PER_CANDIDATE + 1):
-        _gateway_backoff.wait_if_needed()
+        if _deadline_reached(deadline):
+            return None, True
+        if not _gateway_backoff.wait_if_needed(deadline):
+            return None, True
+        if _deadline_reached(deadline):
+            return None, True
         gateway_verdict = _gateway.evaluate(prompt)
         if gateway_verdict is not None:
             _gateway_backoff.clear()
             return gateway_verdict, False
 
         log.warning("AI Gateway unavailable for '%s' on attempt %s; trying Gemini", listing.title, attempt)
-        _gemini_backoff.wait_if_needed()
+        if not _gemini_backoff.wait_if_needed(deadline):
+            return None, True
+        if _deadline_reached(deadline):
+            return None, True
         gemini_verdict = _gemini.evaluate(prompt, skip_retries=skip_gemini_retries or attempt > 1)
         if not gemini_verdict.hit_rate_limit and gemini_verdict.reason != "evaluation failed":
             _gemini_backoff.clear()
@@ -409,16 +441,24 @@ def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> 
         reason = "Gemini rate limited" if gemini_verdict.hit_rate_limit else "both AI providers failed"
         _gemini_backoff.activate(config.GEMINI_SHARED_BACKOFF_SECONDS)
         log.warning("%s for '%s' on attempt %s/%s", reason, listing.title, attempt, AI_MAX_ATTEMPTS_PER_CANDIDATE)
-        if attempt < AI_MAX_ATTEMPTS_PER_CANDIDATE:
-            time.sleep(min(AI_MAX_RETRY_DELAY_SECONDS, delay))
-            delay = min(AI_MAX_RETRY_DELAY_SECONDS, max(1.0, delay * 2))
+        if attempt < AI_MAX_ATTEMPTS_PER_CANDIDATE and not _sleep_until(deadline, min(AI_MAX_RETRY_DELAY_SECONDS, delay)):
+            return None, True
+        delay = min(AI_MAX_RETRY_DELAY_SECONDS, max(1.0, delay * 2))
 
     return None, True
 
 
 def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
-    """Review selected jobs concurrently with explicit terminal states and resumable checkpoints."""
-    _ = deadline
+    """Review selected jobs concurrently with a hard evaluation budget.
+
+    Completed candidates are checkpointed as before. If the deadline expires,
+    in-flight/unstarted candidates are persisted to the retry queue and the
+    checkpoint remains resumable instead of being marked fully completed.
+    """
+    if deadline is None:
+        budget_seconds = max(1, int(getattr(config, "LLM_EVALUATION_BUDGET_SECONDS", 2700)))
+        deadline = time.monotonic() + budget_seconds
+
     retry_jobs = _load_failed_ai_jobs()
     retry_urls = {job.job_url for job in retry_jobs}
     progress = _load_ai_progress()
@@ -457,15 +497,18 @@ def review_candidates(listings: list[JobListing], deadline: float | None = None)
     progress["evaluated_jobs"] = {**evaluated_data, **{job.job_url: {**job.to_dict(), "evaluation_key": evaluation_key(job.job_url, job.description, profile_digest)} for job in resumed_jobs}}
     progress["evaluated_count"] = len(progress["evaluated_jobs"])
     progress["total_candidates"] = len(ordered_jobs) + len(resumed_jobs)
+    progress["deadline_seconds"] = max(0, int(deadline - time.monotonic()))
 
     coordinator = MetricsCoordinator(AI_PROGRESS_PATH, metrics_enabled=getattr(config, "AI_METRICS_ENABLED", True))
     coordinator.save_progress(progress)
-    log.info("AI evaluation queue: %s retry jobs + %s new candidates + %s resumed completed jobs; concurrency=%s", len(retry_jobs), len(new_jobs), len(resumed_jobs), config.AI_MAX_CONCURRENCY)
+    log.info("AI evaluation queue: %s retry jobs + %s new candidates + %s resumed completed jobs; concurrency=%s; budget=%ss", len(retry_jobs), len(new_jobs), len(resumed_jobs), config.AI_MAX_CONCURRENCY, max(0, int(deadline - time.monotonic())))
 
     def worker(listing: JobListing) -> tuple[JobListing, FitVerdict | None, bool, float]:
         started = time.monotonic()
         coordinator.record_candidate_start()
-        verdict, unresolved = evaluate_listing(listing)
+        if _deadline_reached(deadline):
+            return listing, None, True, time.monotonic() - started
+        verdict, unresolved = evaluate_listing(listing, deadline=deadline)
         return listing, verdict, unresolved, time.monotonic() - started
 
     with ThreadPoolExecutor(max_workers=config.AI_MAX_CONCURRENCY, thread_name_prefix="ai-review") as executor:
@@ -498,8 +541,11 @@ def review_candidates(listings: list[JobListing], deadline: float | None = None)
             _save_failed_ai_jobs(failed)
             coordinator.save_progress(progress)
 
-    progress["status"] = "completed"
+    deadline_reached = _deadline_reached(deadline) and len(progress["evaluated_jobs"]) < len(ordered_jobs) + len(resumed_jobs)
+    progress["status"] = "deadline_exceeded" if deadline_reached else "completed"
     progress["completed_at"] = datetime.now(timezone.utc).isoformat()
+    if deadline_reached:
+        progress["deadline_exceeded_at"] = progress["completed_at"]
     progress["metrics"] = coordinator.snapshot()
     _save_failed_ai_jobs(failed)
     coordinator.save_progress(progress)

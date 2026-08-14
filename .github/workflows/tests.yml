@@ -24,8 +24,23 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
 
+      - name: Cache Crawl4AI browser binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/patchright
+          key: crawl4ai-browsers-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            crawl4ai-browsers-${{ runner.os }}-py311-
+
       - name: Install Crawl4AI browser
         run: crawl4ai-setup
+
+      - name: Crawl4AI health check
+        env:
+          CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED: "true"
+        run: python -c "from sources.crawl4ai_discovery import run_healthcheck; print('Crawl4AI health check:', run_healthcheck())"
 
       - name: Run tests
         env:
