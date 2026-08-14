@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 Daily job alert bot — entry point.
 
 Pipeline: fetch from independent sources -> dedupe -> keyword pre-filter ->
-fill missing/short job descriptions with Crawl4AI (Firecrawl fallback when
-configured) -> AI review -> recruiter-email enrichment -> sort -> Sheet/email.
+fill missing/short job descriptions with a bounded Crawl4AI batch -> AI review
+-> recruiter-email enrichment -> sort -> Sheet/email.
 """
 import pandas as pd
 
@@ -28,6 +28,7 @@ from sources.arbeitnow import ArbeitnowSource
 from sources.remoteok import RemoteOKSource
 from sources.firecrawl import FirecrawlSource
 from sources.generic_crawler import crawl_url
+from sources.crawl4ai import crawl_urls as crawl4ai_urls
 from sources.crawl4ai_discovery import Crawl4AIDiscoverySource
 from ai.evaluator import prefilter, review_candidates
 from enrichment.recruiter_email import enrich_with_emails
@@ -144,7 +145,7 @@ def _source_breakdown(listings: list[JobListing]) -> dict:
 
 
 def _enrich_descriptions_with_crawl4ai(listings: list[JobListing]) -> list[JobListing]:
-    """Fill only missing/short descriptions with bounded generic crawling."""
+    """Fill only missing/short descriptions with one bounded Crawl4AI batch."""
     max_pages = max(0, int(config.CRAWL4AI_MAX_DETAIL_PAGES))
     min_chars = max(0, int(config.CRAWL4AI_MIN_DESCRIPTION_CHARS))
     candidates = [
@@ -156,27 +157,41 @@ def _enrich_descriptions_with_crawl4ai(listings: list[JobListing]) -> list[JobLi
         return listings
 
     log.info(
-        "[Crawl4AI] Enriching %s/%s listings with bounded generic crawling",
+        "[Crawl4AI] Batch enriching %s/%s listings with bounded generic crawling",
         len(candidates),
         len(listings),
     )
+    metadata = {
+        listing.job_url: {
+            "title": listing.title,
+            "company": listing.company,
+            "location": listing.location,
+        }
+        for listing in candidates
+    }
+    try:
+        enriched_rows = crawl4ai_urls(
+            [listing.job_url for listing in candidates],
+            timeout_seconds=config.CRAWL4AI_TIMEOUT,
+            max_concurrency=4,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        log.warning("[Crawl4AI] Batch enrichment failed: %s", exc)
+        return listings
+
+    enriched_by_url = {row.job_url: row for row in enriched_rows}
     for listing in candidates:
-        try:
-            enriched = crawl_url(
-                listing.job_url,
-                title=listing.title,
-                company=listing.company,
-                location=listing.location,
-            )
-            if enriched and len((enriched.description or "").strip()) > len((listing.description or "").strip()):
-                listing.description = enriched.description
-                if not listing.company:
-                    listing.company = enriched.company
-                if not listing.location:
-                    listing.location = enriched.location
-                log.info("[Crawl4AI] Enriched: %s", listing.job_url)
-        except Exception as exc:
-            log.warning("[Crawl4AI] Enrichment failed for %s: %s", listing.job_url, exc)
+        enriched = enriched_by_url.get(listing.job_url)
+        if not enriched:
+            continue
+        if len((enriched.description or "").strip()) > len((listing.description or "").strip()):
+            listing.description = enriched.description
+            if not listing.company:
+                listing.company = enriched.company
+            if not listing.location:
+                listing.location = enriched.location
+            log.info("[Crawl4AI] Enriched: %s", listing.job_url)
     return listings
 
 
