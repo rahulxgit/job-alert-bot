@@ -1,4 +1,6 @@
 import argparse
+import time
+from datetime import datetime, timezone
 """
 Daily job alert bot — entry point.
 
@@ -12,6 +14,7 @@ import config
 from models import JobListing
 from utils.logging_setup import get_logger
 from utils.run_artifacts import export_stage, export_summary
+from utils.source_health import SourceHealth, build_search_summary, classify_exception, finalize_health, utc_now
 from sources.linkedin import LinkedInSource
 from sources.google import GoogleJobsSource
 from sources.internshala import InternshalaSource
@@ -44,22 +47,73 @@ ALL_SOURCES = [
 ]
 
 
-def fetch_all() -> tuple:
-    """Run every source independently so one failure never blocks the others."""
+def fetch_all() -> tuple[list[JobListing], dict[str, int], dict[str, SourceHealth]]:
+    """Run every source independently and record health/coverage metrics."""
     all_listings: list[JobListing] = []
-    source_counts: dict = {}
+    source_counts: dict[str, int] = {}
+    source_health: dict[str, SourceHealth] = {}
 
     for source in ALL_SOURCES:
+        health = SourceHealth(name=source.name, started_at=utc_now())
+        source_health[source.name] = health
+        source_started = time.monotonic()
         try:
             listings = source.fetch_listings()
+            if listings is None:
+                listings = []
+            health.jobs_found = len(listings)
         except Exception as exc:
-            log.warning(f"{source.name} raised unexpectedly (should have caught internally): {exc}")
+            classification = classify_exception(exc)
+            health.errors.append(str(exc))
+            health.error_classification = classification
+            health.http_api_failures = int(classification.startswith("HTTP_"))
             listings = []
-        log.info(f"{source.name}: {len(listings)} listings")
-        source_counts[source.name] = len(listings)
-        all_listings.extend(listings)
+            log.warning(
+                "%s raised unexpectedly: classification=%s error=%s",
+                source.name,
+                classification,
+                exc,
+            )
 
-    return all_listings, source_counts
+        health.duration_seconds = max(0.0, time.monotonic() - source_started)
+        health.finished_at = datetime.now(timezone.utc).isoformat()
+        if health.errors:
+            health.status = "FAILED" if not listings else "DEGRADED"
+        elif not listings:
+            health.status = "HEALTHY"
+            health.error_classification = "NO_RESULTS"
+        else:
+            health.status = "HEALTHY"
+
+        source_counts[source.name] = len(listings)
+        health.jobs_found = len(listings)
+        health.urls_discovered = len(listings)
+        all_listings.extend(listings)
+        log.info(
+            "%s: %s listings | status=%s | duration=%.2fs | error=%s",
+            source.name,
+            len(listings),
+            health.status,
+            health.duration_seconds,
+            health.error_classification or "none",
+        )
+
+    zero_sources = [name for name, health in source_health.items() if health.enabled and health.jobs_found == 0]
+    failed_sources = [name for name, health in source_health.items() if health.status == "FAILED"]
+    degraded_sources = [name for name, health in source_health.items() if health.status == "DEGRADED"]
+    if zero_sources:
+        log.warning(
+            "%s enabled sources returned zero jobs: %s. "
+            "This may indicate blocking, selector breakage, API failure, or simply no matches.",
+            len(zero_sources),
+            ", ".join(zero_sources),
+        )
+    if failed_sources:
+        log.warning("%s sources failed but the remaining sources continued: %s", len(failed_sources), ", ".join(failed_sources))
+    if degraded_sources:
+        log.warning("%s sources returned jobs with errors: %s", len(degraded_sources), ", ".join(degraded_sources))
+
+    return all_listings, source_counts, source_health
 
 
 def _normalize_url(url: str) -> str:
@@ -134,18 +188,43 @@ def _export(stage: str, listings: list[JobListing], **metadata) -> None:
         log.warning("[Artifacts] failed to export %s: %s", stage, exc)
 
 
+def _export_search_summary(*, source_health: dict[str, SourceHealth], raw_count: int, unique_count: int, source_breakdown: dict[str, int], duration_seconds: float, status: str) -> None:
+    duplicate_count = max(0, raw_count - unique_count)
+    summary = build_search_summary(
+        source_health=source_health,
+        raw_listings=raw_count,
+        unique_listings=unique_count,
+        source_breakdown=source_breakdown,
+        duplicate_count=duplicate_count,
+        duration_seconds=duration_seconds,
+        status=status,
+    )
+    try:
+        from pathlib import Path
+        import json
+        path = Path("run-artifacts") / "search-summary.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        log.info("[Artifacts] search-summary: %s", path)
+    except Exception as exc:
+        log.warning("[Artifacts] failed to export search summary: %s", exc)
+
+
 def run_pipeline(dry_run: bool = False):
+    search_started = time.monotonic()
     log.info("Fetching from all sources...")
-    all_listings, source_counts = fetch_all()
-    _export("raw-listings", all_listings, source_counts=source_counts)
+    all_listings, source_counts, source_health = fetch_all()
+    raw_count = len(all_listings)
+    _export("raw-listings", all_listings, source_counts=source_counts, source_health={name: health.to_dict() for name, health in source_health.items()})
 
     all_listings = dedupe(all_listings)
     log.info(f"Pulled {len(all_listings)} raw listings total")
     log.info(f"  by source: {source_counts}")
-    _export("deduped-listings", all_listings, source_counts=source_counts)
+    _export("deduped-listings", all_listings, source_counts=source_counts, source_health={name: health.to_dict() for name, health in source_health.items()})
+    _export_search_summary(source_health=source_health, raw_count=raw_count, unique_count=len(all_listings), source_breakdown=_source_breakdown(all_listings), duration_seconds=time.monotonic() - search_started, status="collection_complete")
 
     all_listings = _enrich_descriptions_with_crawl4ai(all_listings)
-    _export("enriched-listings", all_listings, source_counts=source_counts)
+    _export("enriched-listings", all_listings, source_counts=source_counts, source_health={name: health.to_dict() for name, health in source_health.items()})
 
     shortlist = prefilter(all_listings)
     log.info(f"{len(shortlist)} passed the precise pre-filter (AI pool cap {config.MAX_LLM_CANDIDATES})")
@@ -153,6 +232,7 @@ def run_pipeline(dry_run: bool = False):
     _export("prefilter-shortlist", shortlist, source_counts=_source_breakdown(shortlist))
 
     if not shortlist:
+        _export_search_summary(source_health=source_health, raw_count=raw_count, unique_count=len(all_listings), source_breakdown=_source_breakdown(all_listings), duration_seconds=time.monotonic() - search_started, status="completed_no_shortlist")
         export_summary({"status": "completed_no_shortlist", "source_counts": source_counts, "shortlist_count": 0})
         log.info("Nothing to review — no matches today.")
         if not dry_run:
@@ -169,6 +249,7 @@ def run_pipeline(dry_run: bool = False):
     _export("new-unseen-listings", unseen, seen_count=len(seen_urls))
 
     if not unseen:
+        _export_search_summary(source_health=source_health, raw_count=raw_count, unique_count=len(all_listings), source_breakdown=_source_breakdown(all_listings), duration_seconds=time.monotonic() - search_started, status="completed_no_new_jobs")
         export_summary({"status": "completed_no_new_jobs", "source_counts": source_counts, "shortlist_count": len(shortlist), "unseen_count": 0})
         log.info("Everything in the shortlist was already logged — nothing new to review.")
         if not dry_run:
@@ -202,6 +283,7 @@ def run_pipeline(dry_run: bool = False):
     reviewed.sort(key=lambda l: (bool(l.recruiter_email), l.fit_score), reverse=True)
     _export("final-reviewed", reviewed, recruiter_email_count=found_count)
 
+    _export_search_summary(source_health=source_health, raw_count=raw_count, unique_count=len(all_listings), source_breakdown=_source_breakdown(all_listings), duration_seconds=time.monotonic() - search_started, status="ready_for_persistence")
     export_summary({
         "status": "ready_for_persistence",
         "source_counts": source_counts,
