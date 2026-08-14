@@ -122,14 +122,18 @@ def deduplicate_jobs(listings: list[JobListing]) -> tuple[list[JobListing], int]
             continue
         a = set(normalize_text(existing.description).split()) - _STOPWORDS
         b = set(normalize_text(listing.description).split()) - _STOPWORDS
-        similarity = len(a & b) / max(1, len(a | b))
-        # Empty descriptions are only mergeable when the canonical URL also matches;
-        # otherwise same title/company/location may represent separate requisitions.
-        if a and b and similarity >= 0.50:
+        intersection = len(a & b)
+        union = len(a | b)
+        containment = intersection / max(1, min(len(a), len(b)))
+        jaccard = intersection / max(1, union)
+        # A short syndicated description can be a subset of the expanded source.
+        # Require strong token containment or broad overlap before collapsing records.
+        if a and b and (containment >= 0.50 or jaccard >= 0.50):
             if data_quality_score(listing) > data_quality_score(existing):
                 by_identity[key] = listing
         else:
-            by_identity[key + "|" + canonical_url(listing.job_url)] = listing
+            unique_key = key + "|" + canonical_url(listing.job_url)
+            by_identity[unique_key] = listing
 
     result = list(by_identity.values())
     return result, max(0, len(listings) - len(result))
