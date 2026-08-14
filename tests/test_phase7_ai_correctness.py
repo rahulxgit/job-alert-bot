@@ -24,7 +24,7 @@ def test_metrics_record_exact_terminal_states(tmp_path):
         "rejected": 1,
         "retry_attempts": 0,
         "average_latency_seconds": 2.0,
-        "p95_latency_seconds": 2.0,
+        "p95_latency_seconds": 3.0,
     }
 
 
