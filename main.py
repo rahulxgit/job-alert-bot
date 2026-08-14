@@ -6,8 +6,8 @@ from pathlib import Path
 """
 Daily job alert bot — entry point.
 
-Pipeline: fetch from independent sources -> canonicalize/dedupe -> keyword pre-filter
--> quality ranking -> bounded Crawl4AI enrichment -> AI review -> recruiter-email
+Pipeline: fetch from independent sources -> canonicalize/dedupe -> bounded Crawl4AI
+richment -> keyword pre-filter -> quality ranking -> AI review -> recruiter-email
 enrichment -> sort -> Sheet/email.
 """
 import pandas as pd
@@ -45,25 +45,20 @@ ALL_SOURCES = [
     InternshalaSource(), NaukriSource(), WellfoundSource(),
     GreenhouseSource(), LeverSource(), YouTubeSource(), LinkedInPostsSource(),
     ArbeitnowSource(), RemoteOKSource(),
-    Crawl4AIDiscoverySource(),
-    FirecrawlSource(),
+    Crawl4AIDiscoverySource(), FirecrawlSource(),
 ]
 
 
 def fetch_all() -> tuple[list[JobListing], dict[str, int], dict[str, SourceHealth]]:
-    """Run every source independently and record health/coverage metrics."""
     all_listings: list[JobListing] = []
     source_counts: dict[str, int] = {}
     source_health: dict[str, SourceHealth] = {}
-
     for source in ALL_SOURCES:
         health = SourceHealth(name=source.name, started_at=utc_now())
         source_health[source.name] = health
-        source_started = time.monotonic()
+        started = time.monotonic()
         try:
-            listings = source.fetch_listings()
-            if listings is None:
-                listings = []
+            listings = source.fetch_listings() or []
             health.jobs_found = len(listings)
         except Exception as exc:
             classification = classify_exception(exc)
@@ -71,9 +66,8 @@ def fetch_all() -> tuple[list[JobListing], dict[str, int], dict[str, SourceHealt
             health.error_classification = classification
             health.http_api_failures = int(classification.startswith("HTTP_"))
             listings = []
-            log.warning("%s raised unexpectedly: classification=%s error=%s", source.name, classification, exc)
-
-        health.duration_seconds = max(0.0, time.monotonic() - source_started)
+            log.warning("%s raised: classification=%s error=%s", source.name, classification, exc)
+        health.duration_seconds = max(0.0, time.monotonic() - started)
         health.finished_at = datetime.now(timezone.utc).isoformat()
         if health.errors:
             health.status = "FAILED" if not listings else "DEGRADED"
@@ -82,27 +76,17 @@ def fetch_all() -> tuple[list[JobListing], dict[str, int], dict[str, SourceHealt
             health.error_classification = "NO_RESULTS"
         else:
             health.status = "HEALTHY"
-
         source_counts[source.name] = len(listings)
         health.jobs_found = len(listings)
         health.urls_discovered = len(listings)
         all_listings.extend(listings)
-        log.info("%s: %s listings | status=%s | duration=%.2fs | error=%s", source.name, len(listings), health.status, health.duration_seconds, health.error_classification or "none")
-
     zero_sources = [name for name, health in source_health.items() if health.enabled and health.jobs_found == 0]
-    failed_sources = [name for name, health in source_health.items() if health.status == "FAILED"]
-    degraded_sources = [name for name, health in source_health.items() if health.status == "DEGRADED"]
     if zero_sources:
         log.warning("%s enabled sources returned zero jobs: %s", len(zero_sources), ", ".join(zero_sources))
-    if failed_sources:
-        log.warning("%s sources failed but the remaining sources continued: %s", len(failed_sources), ", ".join(failed_sources))
-    if degraded_sources:
-        log.warning("%s sources returned jobs with errors: %s", len(degraded_sources), ", ".join(degraded_sources))
-
     return all_listings, source_counts, source_health
 
 
-def _source_breakdown(listings: list[JobListing]) -> dict:
+def _source_breakdown(listings: list[JobListing]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for listing in listings:
         counts[listing.source] = counts.get(listing.source, 0) + 1
@@ -110,21 +94,17 @@ def _source_breakdown(listings: list[JobListing]) -> dict:
 
 
 def _enrich_descriptions_with_crawl4ai(listings: list[JobListing]) -> list[JobListing]:
-    """Fill only missing/short descriptions with one bounded Crawl4AI batch."""
     max_pages = max(0, int(config.CRAWL4AI_MAX_DETAIL_PAGES))
     min_chars = max(0, int(config.CRAWL4AI_MIN_DESCRIPTION_CHARS))
     candidates = [listing for listing in listings if listing.job_url and len((listing.description or "").strip()) < min_chars][:max_pages]
     if not candidates:
         return listings
-
-    log.info("[Crawl4AI] Batch enriching %s/%s listings", len(candidates), len(listings))
     metadata = {listing.job_url: {"title": listing.title, "company": listing.company, "location": listing.location} for listing in candidates}
     try:
         enriched_rows = crawl4ai_urls([listing.job_url for listing in candidates], timeout_seconds=config.CRAWL4AI_TIMEOUT, max_concurrency=4, metadata=metadata)
     except Exception as exc:
         log.warning("[Crawl4AI] Batch enrichment failed: %s", exc)
         return listings
-
     enriched_by_url = {row.job_url: row for row in enriched_rows}
     for listing in candidates:
         enriched = enriched_by_url.get(listing.job_url)
@@ -177,7 +157,6 @@ def run_pipeline(dry_run: bool = False):
         listing.job_url = canonical_url(listing.job_url)
     log.info("Normalized/deduplicated to %s unique jobs; removed %s duplicates", len(all_listings), duplicates_removed)
     _export("deduped-listings", all_listings, duplicates_removed=duplicates_removed, source_counts=source_counts)
-    _export_search_summary(source_health=source_health, raw_count=raw_count, unique_count=len(all_listings), source_breakdown=_source_breakdown(all_listings), duration_seconds=time.monotonic() - search_started, status="collection_complete")
 
     all_listings = _enrich_descriptions_with_crawl4ai(all_listings)
     _export("enriched-listings", all_listings, source_counts=source_counts)
@@ -187,12 +166,11 @@ def run_pipeline(dry_run: bool = False):
     shortlist = ranked[:config.MAX_LLM_CANDIDATES]
     quality = quality_summary(raw_count, all_listings, eligible, shortlist, duplicates_removed)
     _export_quality_summary(quality)
-    log.info("%s passed the existing precise pre-filter; top %s ranked for AI", len(eligible), len(shortlist))
-    log.info("  by source: %s", _source_breakdown(shortlist))
     _export("prefilter-shortlist", shortlist, source_counts=_source_breakdown(shortlist), quality_summary=quality)
+    _export_search_summary(source_health=source_health, raw_count=raw_count, unique_count=len(all_listings), source_breakdown=_source_breakdown(all_listings), duration_seconds=time.monotonic() - search_started, status="collection_complete")
+    log.info("%s eligible jobs; top %s selected for AI (MAX_LLM_CANDIDATES=%s)", len(eligible), len(shortlist), config.MAX_LLM_CANDIDATES)
 
     if not shortlist:
-        _export_search_summary(source_health=source_health, raw_count=raw_count, unique_count=len(all_listings), source_breakdown=_source_breakdown(all_listings), duration_seconds=time.monotonic() - search_started, status="completed_no_shortlist")
         export_summary({"status": "completed_no_shortlist", "source_counts": source_counts, "shortlist_count": 0, "quality_summary": quality})
         log.info("Nothing to review — no matches today.")
         if not dry_run:
@@ -202,12 +180,11 @@ def run_pipeline(dry_run: bool = False):
 
     sheet = get_sheet()
     seen_urls = {canonical_url(url) for url in get_seen_urls(sheet)}
-    unseen = [l for l in shortlist if canonical_url(l.job_url) not in seen_urls]
-    log.info("%s of those are new (not already logged)", len(unseen))
+    unseen = [listing for listing in shortlist if canonical_url(listing.job_url) not in seen_urls]
     _export("new-unseen-listings", unseen, seen_count=len(seen_urls), quality_summary=quality)
+    log.info("%s of those are new (not already logged)", len(unseen))
 
     if not unseen:
-        _export_search_summary(source_health=source_health, raw_count=raw_count, unique_count=len(all_listings), source_breakdown=_source_breakdown(all_listings), duration_seconds=time.monotonic() - search_started, status="completed_no_new_jobs")
         export_summary({"status": "completed_no_new_jobs", "source_counts": source_counts, "shortlist_count": len(shortlist), "unseen_count": 0, "quality_summary": quality})
         log.info("Everything in the shortlist was already logged — nothing new to review.")
         if not dry_run:
@@ -217,33 +194,27 @@ def run_pipeline(dry_run: bool = False):
 
     reviewed = review_candidates(unseen)
     log.info("%s passed AI fit review (score >= %s)", len(reviewed), config.LLM_FIT_THRESHOLD)
-    log.info("  by source: %s", _source_breakdown(reviewed))
     _export("ai-reviewed", reviewed, threshold=config.LLM_FIT_THRESHOLD, quality_summary=quality)
 
-    reviewed_by_key = {}
+    deduped_reviewed: dict[str, JobListing] = {}
     for listing in reviewed:
         key = canonical_url(listing.job_url)
-        if key not in reviewed_by_key:
-            reviewed_by_key[key] = listing
+        if key not in deduped_reviewed:
+            deduped_reviewed[key] = listing
     latest_seen = {canonical_url(url) for url in get_seen_urls(sheet)}
-    reviewed = [listing for key, listing in reviewed_by_key.items() if key not in latest_seen]
+    reviewed = [listing for key, listing in deduped_reviewed.items() if key not in latest_seen]
 
-    log.info("Looking for recruiter/company emails on the final shortlist...")
     reviewed = enrich_with_emails(reviewed)
     found_count = sum(1 for listing in reviewed if listing.recruiter_email)
-    log.info("  found an email for %s/%s jobs", found_count, len(reviewed))
     reviewed.sort(key=lambda listing: (bool(listing.recruiter_email), listing.fit_score), reverse=True)
     _export("final-reviewed", reviewed, recruiter_email_count=found_count, quality_summary=quality)
 
     _export_search_summary(source_health=source_health, raw_count=raw_count, unique_count=len(all_listings), source_breakdown=_source_breakdown(all_listings), duration_seconds=time.monotonic() - search_started, status="ready_for_persistence")
     export_summary({"status": "ready_for_persistence", "source_counts": source_counts, "shortlist_count": len(shortlist), "unseen_count": len(unseen), "ai_reviewed_count": len(reviewed), "recruiter_email_count": found_count, "quality_summary": quality})
-
     if not dry_run:
         log_new_jobs(sheet, reviewed)
-    body = build_email_body(reviewed, source_counts)
-    if not dry_run:
         gmail = get_gmail_service()
-        send_email(gmail, body, len(reviewed))
+        send_email(gmail, build_email_body(reviewed, source_counts), len(reviewed))
         log.info("Email sent.")
     else:
         log.info("Dry run: email not sent.")
