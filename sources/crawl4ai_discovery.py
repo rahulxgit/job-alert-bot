@@ -27,38 +27,21 @@ _AGGREGATE_MARKERS = (
     "/search", "/category", "/categories", "/tag", "/tags", "/browse",
     "/find-jobs", "jobs.html", "careers-at", "jobs-at",
 )
-_JOB_PATH_MARKERS = (
-    "/job/", "/jobs/", "/jobs/view/", "/vacancy/", "/position/", "/internship/",
-    "/viewjob",
-)
 _JOB_TEXT_SIGNALS = (
     "requirements", "qualifications", "responsibilities", "experience",
     "what you'll do", "what you will do", "apply", "skills", "education",
 )
-
-# Keep the discovery catalog in this module so a partial/older config file
-# cannot silently shrink Crawl4AI coverage. The config values still override
-# this catalog when they contain an explicit expanded list.
 _DEFAULT_DISCOVERY_SEEDS = [
-    "https://boards.greenhouse.io/",
-    "https://jobs.lever.co/",
-    "https://jobs.ashbyhq.com/",
-    "https://www.naukri.com/",
-    "https://internshala.com/jobs/",
-    "https://wellfound.com/jobs",
-    "https://www.linkedin.com/jobs/",
-    "https://www.indeed.com/jobs",
-    "https://www.ycombinator.com/jobs",
-    "https://cutshort.io/jobs",
-    "https://www.instahyre.com/",
-    "https://www.hiringcafe.com/",
+    "https://boards.greenhouse.io/", "https://jobs.lever.co/", "https://jobs.ashbyhq.com/",
+    "https://www.naukri.com/", "https://internshala.com/jobs/", "https://wellfound.com/jobs",
+    "https://www.linkedin.com/jobs/", "https://www.indeed.com/jobs", "https://www.ycombinator.com/jobs",
+    "https://cutshort.io/jobs", "https://www.instahyre.com/", "https://www.hiringcafe.com/",
 ]
 _DEFAULT_DISCOVERY_DOMAINS = [
-    "boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com",
-    "naukri.com", "www.naukri.com", "internshala.com", "www.internshala.com",
-    "wellfound.com", "www.wellfound.com", "linkedin.com", "www.linkedin.com",
-    "indeed.com", "www.indeed.com", "ycombinator.com", "www.ycombinator.com",
-    "cutshort.io", "www.cutshort.io", "instahyre.com", "www.instahyre.com",
+    "boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "naukri.com", "www.naukri.com",
+    "internshala.com", "www.internshala.com", "wellfound.com", "www.wellfound.com",
+    "linkedin.com", "www.linkedin.com", "indeed.com", "www.indeed.com", "ycombinator.com",
+    "www.ycombinator.com", "cutshort.io", "www.cutshort.io", "instahyre.com", "www.instahyre.com",
     "hiringcafe.com", "www.hiringcafe.com",
 ]
 
@@ -74,14 +57,24 @@ class DiscoveryMetrics:
 
 def _discovery_seeds() -> list[str]:
     configured = list(getattr(config, "CRAWL4AI_DISCOVERY_SEED_URLS", []) or [])
-    # main historically had only the original 3 seeds. Treat that legacy value
-    # as a compatibility fallback so the new discovery catalog remains active.
     return configured if len(configured) >= 4 else list(_DEFAULT_DISCOVERY_SEEDS)
 
 
 def _discovery_domains() -> list[str]:
     configured = list(getattr(config, "CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS", []) or [])
     return configured if len(configured) >= 4 else list(_DEFAULT_DISCOVERY_DOMAINS)
+
+
+def _seed_concurrency() -> int:
+    return max(1, int(getattr(config, "CRAWL4AI_DISCOVERY_SEED_CONCURRENCY", 3)))
+
+
+def _healthcheck_enabled() -> bool:
+    return str(getattr(config, "CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED", "true")).lower() == "true"
+
+
+def _healthcheck_url() -> str:
+    return str(getattr(config, "CRAWL4AI_DISCOVERY_HEALTHCHECK_URL", "https://example.com/"))
 
 
 def _normalize_url(url: str) -> str:
@@ -122,34 +115,21 @@ def _looks_job_url(url: str, title: str = "") -> bool:
     title_low = (title or "").lower()
     if any(marker in low for marker in _AGGREGATE_MARKERS):
         return False
-    # Naukri commonly uses /job-listings-<slug>-<id>, while Indeed often uses
-    # /viewjob and other boards use /jobs/<id>. Keep these explicit patterns
-    # instead of accepting every page containing the word "job".
     job_url_patterns = (
-        r"/job-listings-[^/?]+",
-        r"/job/[^/?]+",
-        r"/jobs/[^/?]+",
-        r"/jobs/view/[^/?]+",
-        r"/vacancy/[^/?]+",
-        r"/position/[^/?]+",
-        r"/internship/[^/?]+",
-        r"/viewjob(?:[/?]|$)",
+        r"/job-listings-[^/?]+", r"/job/[^/?]+", r"/jobs/[^/?]+", r"/jobs/view/[^/?]+",
+        r"/vacancy/[^/?]+", r"/position/[^/?]+", r"/internship/[^/?]+", r"/viewjob(?:[/?]|$)",
     )
     if any(re.search(pattern, low) for pattern in job_url_patterns):
         return True
-    job_title_signal = any(
-        token in title_low
-        for token in (
-            "software engineer", "developer", "sde", "frontend", "backend", "full stack",
-            "product engineer", "ai engineer", "ml engineer", "genai", "intern",
-        )
-    )
+    job_title_signal = any(token in title_low for token in (
+        "software engineer", "developer", "sde", "frontend", "backend", "full stack",
+        "product engineer", "ai engineer", "ml engineer", "genai", "intern",
+    ))
     path_segments = [part for part in urlparse(normalized).path.strip("/").split("/") if part]
     return bool(job_title_signal and len(path_segments) >= 2)
 
 
 def _extract_links(markdown: str, base_url: str) -> list[str]:
-    """Extract and normalize markdown/bare HTTP(S) links for deterministic tests and diagnostics."""
     found: list[str] = []
     for match in re.finditer(r"\[[^\]]*\]\(([^)]+)\)", markdown or ""):
         raw = match.group(1).strip()
@@ -215,9 +195,7 @@ def _to_listing(url: str, markdown: str, seed_title: str = "") -> JobListing:
 
 def _strategy() -> BestFirstCrawlingStrategy:
     allowed = [d.lower().removeprefix("www.") for d in _discovery_domains()]
-    patterns = [f"https://{re.escape(domain)}/*" for domain in allowed] + [
-        f"https://www.{re.escape(domain)}/*" for domain in allowed
-    ]
+    patterns = [f"https://{re.escape(domain)}/*" for domain in allowed] + [f"https://www.{re.escape(domain)}/*" for domain in allowed]
     filter_chain = FilterChain([URLPatternFilter(patterns=patterns)])
     scorer = KeywordRelevanceScorer(
         keywords=[
@@ -247,7 +225,6 @@ def _extract_result_markdown(result) -> tuple[str, str, str]:
 
 
 async def _crawl_seed(crawler, seed: str, run_config) -> tuple[str, list[JobListing], int, bool]:
-    """Crawl one seed and isolate failures so other seeds can continue."""
     discovered: list[JobListing] = []
     pages_seen = 0
     try:
@@ -266,10 +243,8 @@ async def _crawl_seed(crawler, seed: str, run_config) -> tuple[str, list[JobList
 
 
 async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
-    seeds = [
-        seed for seed in _discovery_seeds()[: config.CRAWL4AI_DISCOVERY_MAX_SEEDS]
-        if _allowed_host(seed)
-    ]
+    max_seeds = max(1, int(getattr(config, "CRAWL4AI_DISCOVERY_MAX_SEEDS", 12)))
+    seeds = [seed for seed in _discovery_seeds()[:max_seeds] if _allowed_host(seed)]
     if not seeds:
         return [], DiscoveryMetrics()
 
@@ -284,26 +259,19 @@ async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
     seed_successes = 0
     seed_failures = 0
     pages_seen = 0
-    semaphore = asyncio.Semaphore(max(1, config.CRAWL4AI_DISCOVERY_SEED_CONCURRENCY))
+    semaphore = asyncio.Semaphore(_seed_concurrency())
 
     async with AsyncWebCrawler(config=BrowserConfig(headless=True)) as crawler:
         async def bounded_seed(seed: str):
             async with semaphore:
                 return await _crawl_seed(crawler, seed, run_config)
-
         results = await asyncio.gather(*(bounded_seed(seed) for seed in seeds))
 
     for seed, rows, seed_pages_seen, succeeded in results:
         pages_seen += seed_pages_seen
         seed_successes += int(succeeded)
         seed_failures += int(not succeeded)
-        log.info(
-            "[Crawl4AI] Seed %s: pages=%s jobs=%s status=%s",
-            seed,
-            seed_pages_seen,
-            len(rows),
-            "SUCCESS" if succeeded else "FAILED",
-        )
+        log.info("[Crawl4AI] Seed %s: pages=%s jobs=%s status=%s", seed, seed_pages_seen, len(rows), "SUCCESS" if succeeded else "FAILED")
         for row in rows:
             unique_rows.setdefault(row.job_url, row)
             if len(unique_rows) >= config.CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES:
@@ -313,44 +281,31 @@ async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
 
     rows = list(unique_rows.values())[: config.CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES]
     metrics = DiscoveryMetrics(
-        seeds_attempted=len(seeds),
-        seeds_succeeded=seed_successes,
-        pages_seen=pages_seen,
-        jobs_discovered=len(rows),
-        seed_failures=seed_failures,
+        seeds_attempted=len(seeds), seeds_succeeded=seed_successes, pages_seen=pages_seen,
+        jobs_discovered=len(rows), seed_failures=seed_failures,
     )
-    log.info(
-        "[Crawl4AI] Discovery metrics: seeds=%s succeeded=%s failed=%s pages=%s jobs=%s",
-        metrics.seeds_attempted,
-        metrics.seeds_succeeded,
-        metrics.seed_failures,
-        metrics.pages_seen,
-        metrics.jobs_discovered,
-    )
+    log.info("[Crawl4AI] Discovery metrics: seeds=%s succeeded=%s failed=%s pages=%s jobs=%s", metrics.seeds_attempted, metrics.seeds_succeeded, metrics.seed_failures, metrics.pages_seen, metrics.jobs_discovered)
     return rows, metrics
 
 
 async def _healthcheck() -> str:
-    if not config.CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED:
+    url = _healthcheck_url()
+    if not _healthcheck_enabled():
         log.info("[Crawl4AI] Health check disabled")
-        return config.CRAWL4AI_DISCOVERY_HEALTHCHECK_URL
-    run_config = CrawlerRunConfig(
-        cache_mode=CacheMode.BYPASS,
-        page_timeout=max(5000, config.CRAWL4AI_DISCOVERY_TIMEOUT * 1000),
-    )
+        return url
+    run_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS, page_timeout=max(5000, config.CRAWL4AI_DISCOVERY_TIMEOUT * 1000))
     async with AsyncWebCrawler(config=BrowserConfig(headless=True)) as crawler:
-        result = await crawler.arun(url=config.CRAWL4AI_DISCOVERY_HEALTHCHECK_URL, config=run_config)
+        result = await crawler.arun(url=url, config=run_config)
         if not result.success:
             raise RuntimeError(getattr(result, "error_message", "health check crawl failed"))
         markdown_obj = getattr(result, "markdown", "") or ""
         markdown = getattr(markdown_obj, "raw_markdown", markdown_obj)
         if len(str(markdown).strip()) < 50:
             raise RuntimeError("health check returned insufficient markdown")
-    return config.CRAWL4AI_DISCOVERY_HEALTHCHECK_URL
+    return url
 
 
 def run_healthcheck() -> str:
-    """Run a small real crawl used by CI/diagnostics."""
     return asyncio.run(_healthcheck())
 
 
