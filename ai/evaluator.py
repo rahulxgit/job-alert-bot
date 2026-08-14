@@ -15,6 +15,8 @@ from ai.gemini_provider import GeminiProvider
 from ai.gateway_provider import GatewayProvider
 from ai.profile import build_candidate_profile
 from ai.metrics import MetricsCoordinator
+from ai.checkpoint import CHECKPOINT_VERSION, compatible, evaluation_key, profile_hash, checkpoint_identity
+from ai.provider_limiter import ProviderBackoff
 from utils.logging_setup import get_logger
 
 log = get_logger("evaluator")
@@ -23,10 +25,12 @@ _gateway = GatewayProvider()
 _candidate_profile = None
 FAILED_AI_JOBS_PATH = Path("failed-ai-jobs.json")
 AI_PROGRESS_PATH = Path("run-artifacts/ai-progress.json")
-AI_PROGRESS_VERSION = 1
+AI_PROGRESS_VERSION = CHECKPOINT_VERSION
 AI_MAX_ATTEMPTS_PER_CANDIDATE = max(1, int(getattr(config, "AI_EVALUATION_MAX_ATTEMPTS_PER_CANDIDATE", 3)))
 AI_RETRY_DELAY_SECONDS = max(1.0, float(getattr(config, "AI_EVALUATION_RETRY_DELAY_SECONDS", 15)))
 AI_MAX_RETRY_DELAY_SECONDS = max(AI_RETRY_DELAY_SECONDS, float(getattr(config, "AI_EVALUATION_MAX_RETRY_DELAY_SECONDS", 60)))
+_gemini_backoff = ProviderBackoff()
+_gateway_backoff = ProviderBackoff()
 
 
 def _profile() -> str:
@@ -322,7 +326,7 @@ def _load_ai_progress() -> dict:
         return payload
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         log.warning("Could not load AI progress checkpoint: %s", exc)
-        return {}
+        return []
 
 
 def _save_ai_progress(progress: dict) -> None:
@@ -383,51 +387,74 @@ def _apply_verdict(listing: JobListing, verdict: FitVerdict) -> bool:
     return listing.fit_score >= config.LLM_FIT_THRESHOLD and listing.fresher_appropriate
 
 
-def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> tuple:
-    """Retry the same candidate a bounded number of times before queueing it."""
+def evaluate_listing(listing: JobListing, skip_gemini_retries: bool = False) -> tuple[FitVerdict | None, bool]:
+    """Retry the same candidate while coordinating provider backoff across workers."""
     prompt = _build_prompt(listing)
     delay = AI_RETRY_DELAY_SECONDS
 
     for attempt in range(1, AI_MAX_ATTEMPTS_PER_CANDIDATE + 1):
-        gateway_started = time.monotonic()
+        _gateway_backoff.wait_if_needed()
         gateway_verdict = _gateway.evaluate(prompt)
-        gateway_latency = time.monotonic() - gateway_started
         if gateway_verdict is not None:
+            _gateway_backoff.clear()
             return gateway_verdict, False
 
         log.warning("AI Gateway unavailable for '%s' on attempt %s; trying Gemini", listing.title, attempt)
-        gemini_started = time.monotonic()
+        _gemini_backoff.wait_if_needed()
         gemini_verdict = _gemini.evaluate(prompt, skip_retries=skip_gemini_retries or attempt > 1)
-        _ = gemini_started, gateway_latency
         if not gemini_verdict.hit_rate_limit and gemini_verdict.reason != "evaluation failed":
+            _gemini_backoff.clear()
             return gemini_verdict, False
 
-        reason = "Gemini rate limited" if gemini_verdict.hit_rate_limit else "both AI providers failed"
+        if gemini_verdict.hit_rate_limit:
+            _gemini_backoff.activate(config.GEMINI_SHARED_BACKOFF_SECONDS)
+            reason = "Gemini rate limited"
+        else:
+            _gemini_backoff.activate(config.GEMINI_SHARED_BACKOFF_SECONDS)
+            reason = "both AI providers failed"
+
         log.warning("%s for '%s' on attempt %s/%s", reason, listing.title, attempt, AI_MAX_ATTEMPTS_PER_CANDIDATE)
         if attempt < AI_MAX_ATTEMPTS_PER_CANDIDATE:
-            time.sleep(delay)
             delay = min(AI_MAX_RETRY_DELAY_SECONDS, max(1.0, delay * 2))
+            time.sleep(min(AI_MAX_RETRY_DELAY_SECONDS, delay))
 
     return None, True
 
 
 def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
-    """Review selected jobs concurrently while keeping checkpoint writes serialized."""
+    """Review selected jobs concurrently with explicit terminal states and resumable checkpoints."""
     _ = deadline
     retry_jobs = _load_failed_ai_jobs()
     retry_urls = {job.job_url for job in retry_jobs}
     progress = _load_ai_progress()
+
+    # Build the new candidate set first; completed checkpoint entries are only
+    # reusable when their candidate set and profile/prompt identity match.
+    current_candidates = [job for job in listings if job.job_url and job.job_url not in retry_urls]
+    new_candidate_urls = [job.job_url for job in current_candidates[:config.MAX_LLM_CANDIDATES]]
+    progress_identity = checkpoint_identity(new_candidate_urls, profile_hash(_profile()))
+    if progress and not compatible(progress, new_candidate_urls, progress_identity["profile_hash"]):
+        log.warning("Ignoring incompatible AI checkpoint; candidate/profile context changed")
+        progress = {}
+
     evaluated_data = progress.get("evaluated_jobs", {}) if isinstance(progress.get("evaluated_jobs", {}), dict) else {}
     restored_jobs = {}
+    restored_keys = {}
     for url, data in evaluated_data.items():
         job = _job_from_dict(data)
         if job and url:
             restored_jobs[url] = job
+            restored_keys[url] = data.get("evaluation_key") if isinstance(data, dict) else None
 
     current_by_url = {job.job_url: job for job in listings if job.job_url}
-    resumed_jobs = [current_by_url[url] if url in current_by_url else job for url, job in restored_jobs.items() if url in current_by_url]
+    resumed_jobs = []
+    for url, job in restored_jobs.items():
+        if url in current_by_url:
+            expected_key = evaluation_key(url, current_by_url[url].description, profile_identity if False else profile_hash(_profile()))
+            if restored_keys.get(url) == expected_key:
+                resumed_jobs.append(current_by_url[url])
     resumed_urls = {job.job_url for job in resumed_jobs}
-    current_jobs = [job for job in listings if job.job_url not in retry_urls and job.job_url not in resumed_urls]
+    current_jobs = [job for job in current_candidates if job.job_url not in resumed_urls]
     new_jobs = current_jobs[:config.MAX_LLM_CANDIDATES]
     ordered_jobs = retry_jobs + new_jobs
 
@@ -435,9 +462,10 @@ def review_candidates(listings: list[JobListing], deadline: float | None = None)
     failed = list(retry_jobs)
     failed_urls = {job.job_url for job in failed}
     progress = progress if progress else {"version": AI_PROGRESS_VERSION, "status": "in_progress", "candidate_urls": [], "evaluated_jobs": {}, "started_at": datetime.now(timezone.utc).isoformat()}
+    progress.update(progress_identity)
     progress["status"] = "in_progress"
     progress["candidate_urls"] = [job.job_url for job in ordered_jobs]
-    progress["evaluated_jobs"] = {**evaluated_data, **{job.job_url: job.to_dict() for job in resumed_jobs}}
+    progress["evaluated_jobs"] = {**evaluated_data, **{job.job_url: {**job.to_dict(), "evaluation_key": evaluation_key(job.job_url, job.description, progress_identity["profile_hash"])} for job in resumed_jobs}}
     progress["evaluated_count"] = len(progress["evaluated_jobs"])
     progress["total_candidates"] = len(ordered_jobs) + len(resumed_jobs)
 
@@ -462,27 +490,22 @@ def review_candidates(listings: list[JobListing], deadline: float | None = None)
                 verdict, unresolved, duration = None, True, 0.0
 
             if unresolved or verdict is None:
-                coordinator.record_result(passed=None)
+                coordinator.record_candidate_result(status="UNRESOLVED", duration_seconds=duration)
                 if listing.job_url not in failed_urls:
                     failed.append(listing)
                     failed_urls.add(listing.job_url)
                 progress["failed_urls"] = sorted(failed_urls)
             else:
-                coordinator.record_result(passed=False)
                 failed = [job for job in failed if job.job_url != listing.job_url]
                 failed_urls.discard(listing.job_url)
                 passed_flag = _apply_verdict(listing, verdict)
+                status = "PASSED" if passed_flag else "REJECTED"
+                coordinator.record_candidate_result(status=status, duration_seconds=duration)
                 if passed_flag:
                     passed.append(listing)
-                    coordinator.metrics.passed = max(0, coordinator.metrics.passed - 1)
-                    coordinator.metrics.rejected = max(0, coordinator.metrics.rejected - 1)
-                    coordinator.record_result(passed=True)
-                progress["evaluated_jobs"][listing.job_url] = listing.to_dict()
+                progress["evaluated_jobs"][listing.job_url] = {**listing.to_dict(), "evaluation_key": evaluation_key(listing.job_url, listing.description, progress_identity["profile_hash"])}
                 progress["evaluated_count"] = len(progress["evaluated_jobs"])
                 progress["failed_urls"] = sorted(failed_urls)
-            if coordinator.metrics_enabled:
-                with coordinator._lock:
-                    coordinator.metrics.latency_seconds.append(max(0.0, duration))
 
             _save_failed_ai_jobs(failed)
             coordinator.save_progress(progress)
@@ -494,7 +517,9 @@ def review_candidates(listings: list[JobListing], deadline: float | None = None)
     coordinator.save_progress(progress)
     try:
         Path("run-artifacts").mkdir(parents=True, exist_ok=True)
-        Path("run-artifacts/ai-metrics.json").write_text(json.dumps(coordinator.snapshot(), ensure_ascii=False, indent=2), encoding="utf-8")
+        summary = {**coordinator.snapshot(), "candidate_count": len(ordered_jobs) + len(resumed_jobs), "status": progress["status"]}
+        Path("run-artifacts/ai-metrics.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        Path("run-artifacts/ai-evaluation-summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError as exc:
         log.warning("Could not write AI metrics artifact: %s", exc)
     passed.sort(key=lambda l: l.fit_score, reverse=True)
