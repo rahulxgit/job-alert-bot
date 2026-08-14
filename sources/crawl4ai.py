@@ -1,11 +1,11 @@
-"""Crawl4AI-backed generic web crawler with a normalized result contract.
+"""
+Crawl4AI-backed generic web crawler with a normalized result contract.
 
-Crawl4AI is the primary provider for generic URL crawling. This module is
-kept provider-only so callers can use normalized JobListing objects without
-knowing which crawler produced them.
+The batch path reuses one browser session and uses bounded concurrency so
+browser startup overhead is paid once per batch instead of once per URL.
 """
 import asyncio
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
 
@@ -25,39 +25,63 @@ def _run(coro):
     try:
         return asyncio.run(coro)
     except RuntimeError as exc:
-        # This normally means a caller already owns the event loop.
         raise Crawl4AIError(f"async crawler execution failed: {exc}") from exc
 
 
-async def _crawl_url(url: str, timeout_ms: int) -> str:
-    browser_config = BrowserConfig(headless=True)
+async def _crawl_url_with_crawler(crawler, url: str, timeout_ms: int) -> str:
     run_config = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
         page_timeout=timeout_ms,
     )
+    result = await crawler.arun(url=url, config=run_config)
+    if not result.success:
+        raise Crawl4AIError(result.error_message or "crawl failed")
+
+    markdown = getattr(result, "markdown", "") or ""
+    if hasattr(markdown, "raw_markdown"):
+        markdown = markdown.raw_markdown
+    markdown = str(markdown).strip()
+    if not markdown:
+        raise Crawl4AIError("crawl returned empty content")
+    return markdown
+
+
+async def _crawl_batch(
+    urls: list[str],
+    *,
+    timeout_ms: int,
+    concurrency: int,
+) -> dict[str, str | Exception]:
+    """Crawl a batch with one browser session and bounded concurrency."""
+    browser_config = BrowserConfig(headless=True)
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+    results: dict[str, str | Exception] = {}
 
     async with AsyncWebCrawler(config=browser_config) as crawler:
-        result = await crawler.arun(url=url, config=run_config)
-        if not result.success:
-            raise Crawl4AIError(result.error_message or "crawl failed")
-        markdown = getattr(result, "markdown", "") or ""
-        if hasattr(markdown, "raw_markdown"):
-            markdown = markdown.raw_markdown
-        markdown = str(markdown).strip()
-        if not markdown:
-            raise Crawl4AIError("crawl returned empty content")
-        return markdown
+        async def worker(url: str) -> None:
+            async with semaphore:
+                try:
+                    results[url] = await _crawl_url_with_crawler(crawler, url, timeout_ms)
+                except Exception as exc:
+                    results[url] = exc
+
+        await asyncio.gather(*(worker(url) for url in urls))
+
+    return results
 
 
 def scrape_url(url: str, *, title: str = "", company: str = "", location: str = "India", timeout_seconds: int = 30) -> JobListing:
     """Crawl one URL and normalize it into the existing JobListing contract."""
     if not url:
         raise Crawl4AIError("url is required")
-    log.info(f"[Crawl4AI] Starting scrape: {url}")
+    log.info("[Crawl4AI] Starting scrape: %s", url)
     try:
-        markdown = _run(_crawl_url(url, timeout_seconds * 1000))
+        result = _run(_crawl_batch([url], timeout_ms=timeout_seconds * 1000, concurrency=1)).get(url)
+        if isinstance(result, Exception) or result is None:
+            raise result if isinstance(result, Exception) else Crawl4AIError("crawl returned no result")
+        markdown = result
     except Exception as exc:
-        log.warning(f"[Crawl4AI] Failed: {exc}")
+        log.warning("[Crawl4AI] Failed: %s", exc)
         raise Crawl4AIError(str(exc)) from exc
 
     listing = JobListing(
@@ -68,18 +92,58 @@ def scrape_url(url: str, *, title: str = "", company: str = "", location: str = 
         description=markdown,
         source="Crawl4AI",
     )
-    log.info(f"[Crawl4AI] Success: {url}")
+    log.info("[Crawl4AI] Success: %s", url)
     return listing
 
 
-def crawl_urls(urls: Iterable[str], *, timeout_seconds: int = 30) -> list[JobListing]:
-    """Crawl a bounded collection of URLs sequentially with clean resources."""
-    rows = []
-    for url in urls:
-        try:
-            rows.append(scrape_url(url, timeout_seconds=timeout_seconds))
-        except Crawl4AIError:
+def crawl_urls(
+    urls: Iterable[str],
+    *,
+    timeout_seconds: int = 30,
+    max_concurrency: int = 4,
+    metadata: Mapping[str, Mapping[str, str]] | None = None,
+) -> list[JobListing]:
+    """Crawl URLs in one browser session with bounded concurrency.
+
+    Individual URL failures are isolated so one bad page never discards
+    successful results from the same batch. Optional metadata preserves the
+    title/company/location already known by the caller.
+    """
+    normalized_urls = [url for url in urls if url]
+    if not normalized_urls:
+        return []
+
+    log.info(
+        "[Crawl4AI] Batch scrape: %s URLs, concurrency=%s",
+        len(normalized_urls),
+        max(1, max_concurrency),
+    )
+    raw_results = _run(
+        _crawl_batch(
+            normalized_urls,
+            timeout_ms=timeout_seconds * 1000,
+            concurrency=max_concurrency,
+        )
+    )
+
+    rows: list[JobListing] = []
+    for url in normalized_urls:
+        result = raw_results.get(url)
+        if isinstance(result, Exception) or result is None:
+            log.warning("[Crawl4AI] Failed: %s: %s", url, result)
             continue
+        details = metadata.get(url, {}) if metadata else {}
+        rows.append(
+            JobListing(
+                job_url=url,
+                title=details.get("title", "") or url,
+                company=details.get("company", ""),
+                location=details.get("location", "India") or "India",
+                description=result,
+                source="Crawl4AI",
+            )
+        )
+        log.info("[Crawl4AI] Success: %s", url)
     return rows
 
 
@@ -88,9 +152,14 @@ class Crawl4AISource(JobSource):
 
     name = "Crawl4AI"
 
-    def __init__(self, urls: Iterable[str] | None = None, *, timeout_seconds: int = 30):
+    def __init__(self, urls: Iterable[str] | None = None, *, timeout_seconds: int = 30, max_concurrency: int = 4):
         self.urls = list(urls or [])
         self.timeout_seconds = timeout_seconds
+        self.max_concurrency = max_concurrency
 
     def fetch_listings(self) -> list[JobListing]:
-        return crawl_urls(self.urls, timeout_seconds=self.timeout_seconds)
+        return crawl_urls(
+            self.urls,
+            timeout_seconds=self.timeout_seconds,
+            max_concurrency=self.max_concurrency,
+        )
