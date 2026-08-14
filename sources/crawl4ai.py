@@ -5,7 +5,7 @@ The batch path reuses one browser session and uses bounded concurrency so
 browser startup overhead is paid once per batch instead of once per URL.
 """
 import asyncio
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
 
@@ -76,9 +76,10 @@ def scrape_url(url: str, *, title: str = "", company: str = "", location: str = 
         raise Crawl4AIError("url is required")
     log.info("[Crawl4AI] Starting scrape: %s", url)
     try:
-        markdown = _run(_crawl_batch([url], timeout_ms=timeout_seconds * 1000, concurrency=1))[url]
-        if isinstance(markdown, Exception):
-            raise markdown
+        result = _run(_crawl_batch([url], timeout_ms=timeout_seconds * 1000, concurrency=1)).get(url)
+        if isinstance(result, Exception) or result is None:
+            raise result if isinstance(result, Exception) else Crawl4AIError("crawl returned no result")
+        markdown = result
     except Exception as exc:
         log.warning("[Crawl4AI] Failed: %s", exc)
         raise Crawl4AIError(str(exc)) from exc
@@ -100,11 +101,13 @@ def crawl_urls(
     *,
     timeout_seconds: int = 30,
     max_concurrency: int = 4,
+    metadata: Mapping[str, Mapping[str, str]] | None = None,
 ) -> list[JobListing]:
-    """Crawl a bounded collection using one browser session.
+    """Crawl URLs in one browser session with bounded concurrency.
 
     Individual URL failures are isolated so one bad page never discards
-    successful results from the same batch.
+    successful results from the same batch. Optional metadata preserves the
+    title/company/location already known by the caller.
     """
     normalized_urls = [url for url in urls if url]
     if not normalized_urls:
@@ -126,15 +129,16 @@ def crawl_urls(
     rows: list[JobListing] = []
     for url in normalized_urls:
         result = raw_results.get(url)
-        if isinstance(result, Exception):
+        if isinstance(result, Exception) or result is None:
             log.warning("[Crawl4AI] Failed: %s: %s", url, result)
             continue
+        details = metadata.get(url, {}) if metadata else {}
         rows.append(
             JobListing(
                 job_url=url,
-                title=url,
-                company="",
-                location="India",
+                title=details.get("title", "") or url,
+                company=details.get("company", ""),
+                location=details.get("location", "India") or "India",
                 description=result,
                 source="Crawl4AI",
             )
