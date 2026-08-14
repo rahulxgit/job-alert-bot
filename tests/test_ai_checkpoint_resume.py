@@ -72,7 +72,12 @@ def test_checkpoint_resumes_after_worker_interruption(tmp_path, monkeypatch):
     monkeypatch.setattr(evaluator, "evaluate_listing", resumed_eval)
     reviewed = evaluator.review_candidates(jobs)
 
-    assert resumed_calls == [jobs[2].job_url]
+    # The unresolved job is retried first; the remaining new candidates are then
+    # eligible for the same run. Completion order is intentionally nondeterministic
+    # because the evaluator uses a bounded worker pool.
+    assert resumed_calls[0] == jobs[2].job_url
+    assert set(resumed_calls) == {job.job_url for job in jobs}
+    assert len(resumed_calls) == 5
     assert len(reviewed) == 5
 
     final_checkpoint = json.loads(progress_path.read_text(encoding="utf-8"))
