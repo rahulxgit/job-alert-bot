@@ -36,6 +36,32 @@ _JOB_TEXT_SIGNALS = (
     "what you'll do", "what you will do", "apply", "skills", "education",
 )
 
+# Keep the discovery catalog in this module so a partial/older config file
+# cannot silently shrink Crawl4AI coverage. The config values still override
+# this catalog when they contain an explicit expanded list.
+_DEFAULT_DISCOVERY_SEEDS = [
+    "https://boards.greenhouse.io/",
+    "https://jobs.lever.co/",
+    "https://jobs.ashbyhq.com/",
+    "https://www.naukri.com/",
+    "https://internshala.com/jobs/",
+    "https://wellfound.com/jobs",
+    "https://www.linkedin.com/jobs/",
+    "https://www.indeed.com/jobs",
+    "https://www.ycombinator.com/jobs",
+    "https://cutshort.io/jobs",
+    "https://www.instahyre.com/",
+    "https://www.hiringcafe.com/",
+]
+_DEFAULT_DISCOVERY_DOMAINS = [
+    "boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com",
+    "naukri.com", "www.naukri.com", "internshala.com", "www.internshala.com",
+    "wellfound.com", "www.wellfound.com", "linkedin.com", "www.linkedin.com",
+    "indeed.com", "www.indeed.com", "ycombinator.com", "www.ycombinator.com",
+    "cutshort.io", "www.cutshort.io", "instahyre.com", "www.instahyre.com",
+    "hiringcafe.com", "www.hiringcafe.com",
+]
+
 
 @dataclass(frozen=True)
 class DiscoveryMetrics:
@@ -44,6 +70,18 @@ class DiscoveryMetrics:
     pages_seen: int = 0
     jobs_discovered: int = 0
     seed_failures: int = 0
+
+
+def _discovery_seeds() -> list[str]:
+    configured = list(getattr(config, "CRAWL4AI_DISCOVERY_SEED_URLS", []) or [])
+    # main historically had only the original 3 seeds. Treat that legacy value
+    # as a compatibility fallback so the new discovery catalog remains active.
+    return configured if len(configured) >= 4 else list(_DEFAULT_DISCOVERY_SEEDS)
+
+
+def _discovery_domains() -> list[str]:
+    configured = list(getattr(config, "CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS", []) or [])
+    return configured if len(configured) >= 4 else list(_DEFAULT_DISCOVERY_DOMAINS)
 
 
 def _normalize_url(url: str) -> str:
@@ -72,7 +110,7 @@ def _allowed_host(url: str) -> bool:
     host = _host(url)
     if not host or host in _NON_JOB_DOMAINS:
         return False
-    allowed = {d.lower().removeprefix("www.") for d in config.CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS}
+    allowed = {d.lower().removeprefix("www.") for d in _discovery_domains()}
     return host in allowed
 
 
@@ -84,8 +122,20 @@ def _looks_job_url(url: str, title: str = "") -> bool:
     title_low = (title or "").lower()
     if any(marker in low for marker in _AGGREGATE_MARKERS):
         return False
-    # Several sites use query-driven detail URLs (for example Indeed viewjob).
-    if any(marker in low for marker in _JOB_PATH_MARKERS):
+    # Naukri commonly uses /job-listings-<slug>-<id>, while Indeed often uses
+    # /viewjob and other boards use /jobs/<id>. Keep these explicit patterns
+    # instead of accepting every page containing the word "job".
+    job_url_patterns = (
+        r"/job-listings-[^/?]+",
+        r"/job/[^/?]+",
+        r"/jobs/[^/?]+",
+        r"/jobs/view/[^/?]+",
+        r"/vacancy/[^/?]+",
+        r"/position/[^/?]+",
+        r"/internship/[^/?]+",
+        r"/viewjob(?:[/?]|$)",
+    )
+    if any(re.search(pattern, low) for pattern in job_url_patterns):
         return True
     job_title_signal = any(
         token in title_low
@@ -164,7 +214,7 @@ def _to_listing(url: str, markdown: str, seed_title: str = "") -> JobListing:
 
 
 def _strategy() -> BestFirstCrawlingStrategy:
-    allowed = [d.lower().removeprefix("www.") for d in config.CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS]
+    allowed = [d.lower().removeprefix("www.") for d in _discovery_domains()]
     patterns = [f"https://{re.escape(domain)}/*" for domain in allowed] + [
         f"https://www.{re.escape(domain)}/*" for domain in allowed
     ]
@@ -217,7 +267,7 @@ async def _crawl_seed(crawler, seed: str, run_config) -> tuple[str, list[JobList
 
 async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
     seeds = [
-        seed for seed in config.CRAWL4AI_DISCOVERY_SEED_URLS[: config.CRAWL4AI_DISCOVERY_MAX_SEEDS]
+        seed for seed in _discovery_seeds()[: config.CRAWL4AI_DISCOVERY_MAX_SEEDS]
         if _allowed_host(seed)
     ]
     if not seeds:
