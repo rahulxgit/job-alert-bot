@@ -10,20 +10,12 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from models import JobListing
 
 _TRACKING_KEYS = {"ref", "src", "trk", "gclid", "fbclid", "mc_cid", "mc_eid"}
-_LOCATION_ALIASES = {
-    "bangalore": "bengaluru",
-    "bengaluru": "bengaluru",
-    "bombay": "mumbai",
-    "gurgaon": "gurugram",
-    "new delhi": "delhi",
-}
+_LOCATION_ALIASES = {"bangalore": "bengaluru", "bengaluru": "bengaluru", "bombay": "mumbai", "gurgaon": "gurugram", "new delhi": "delhi"}
 _STOPWORDS = {"the", "a", "an", "and", "of", "for", "to", "in", "at", "on", "with"}
 
 
 def normalize_text(value: str) -> str:
-    value = (value or "").strip().lower()
-    value = re.sub(r"\s+", " ", value)
-    return value
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
 
 
 def normalize_title(value: str) -> str:
@@ -34,8 +26,7 @@ def normalize_title(value: str) -> str:
 
 
 def normalize_company(value: str) -> str:
-    value = normalize_text(value)
-    value = re.sub(r"[^a-z0-9& ]+", " ", value)
+    value = re.sub(r"[^a-z0-9& ]+", " ", normalize_text(value))
     return re.sub(r"\s+", " ", value).strip()
 
 
@@ -57,7 +48,6 @@ def canonical_url(url: str) -> str:
 
 
 def normalize_posting_date(value: str) -> tuple[str, str]:
-    """Return (ISO-ish normalized value, freshness bucket)."""
     raw = normalize_text(value)
     if not raw:
         return "", "UNKNOWN"
@@ -69,14 +59,12 @@ def normalize_posting_date(value: str) -> tuple[str, str]:
         seconds = amount * {"minute": 60, "hour": 3600, "day": 86400}[unit]
         dt = now.fromtimestamp(now.timestamp() - seconds, tz=timezone.utc)
         age_days = seconds / 86400
-        bucket = "FRESH" if age_days <= 1 else "RECENT" if age_days <= 7 else "STALE"
-        return dt.isoformat(), bucket
+        return dt.isoformat(), ("FRESH" if age_days <= 1 else "RECENT" if age_days <= 7 else "STALE")
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"):
         try:
             dt = datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
             age_days = max(0.0, (now - dt).total_seconds() / 86400)
-            bucket = "FRESH" if age_days <= 1 else "RECENT" if age_days <= 7 else "STALE"
-            return dt.date().isoformat(), bucket
+            return dt.date().isoformat(), ("FRESH" if age_days <= 1 else "RECENT" if age_days <= 7 else "STALE")
         except ValueError:
             continue
     return value.strip(), "UNKNOWN"
@@ -86,7 +74,7 @@ def description_quality(listing: JobListing) -> int:
     desc = normalize_text(listing.description)
     score = min(30, len(desc) // 100)
     keywords = ("requirements", "qualifications", "responsibilities", "experience", "skills")
-    score += min(30, sum(5 for keyword in keywords if keyword in desc))
+    score += min(30, 5 * sum(keyword in desc for keyword in keywords))
     score += 10 if listing.title else 0
     score += 10 if listing.company else 0
     score += 10 if listing.location else 0
@@ -95,8 +83,7 @@ def description_quality(listing: JobListing) -> int:
 
 
 def data_quality_score(listing: JobListing) -> int:
-    score = 0
-    score += 20 if canonical_url(listing.job_url) else 0
+    score = 20 if canonical_url(listing.job_url) else 0
     score += 15 if listing.title.strip() else 0
     score += 15 if listing.company.strip() else 0
     score += 10 if listing.location.strip() else 0
@@ -111,77 +98,58 @@ def _job_fingerprint(listing: JobListing) -> str:
     canonical = canonical_url(listing.job_url)
     if canonical:
         return "url:" + hashlib.sha256(canonical.encode()).hexdigest()
-    payload = "|".join([
-        normalize_company(listing.company),
-        normalize_title(listing.title),
-        normalize_location(listing.location),
-        normalize_text(listing.description)[:1000],
-    ])
+    payload = "|".join((normalize_company(listing.company), normalize_title(listing.title), normalize_location(listing.location), normalize_text(listing.description)[:1000]))
     return "content:" + hashlib.sha256(payload.encode()).hexdigest()
 
 
 def _similar_identity(listing: JobListing) -> str:
-    return "|".join([
-        normalize_company(listing.company),
-        normalize_title(listing.title),
-        normalize_location(listing.location),
-    ])
+    return "|".join((normalize_company(listing.company), normalize_title(listing.title), normalize_location(listing.location)))
 
 
 def deduplicate_jobs(listings: list[JobListing]) -> tuple[list[JobListing], int]:
-    """Collapse exact and strong cross-source duplicates, keeping the best record."""
+    """Collapse exact duplicates and only very strong cross-source matches."""
     groups: dict[str, list[JobListing]] = defaultdict(list)
     for listing in listings:
         groups[_job_fingerprint(listing)].append(listing)
+    merged = [max(members, key=data_quality_score) for members in groups.values()]
 
-    merged: list[JobListing] = []
-    for members in groups.values():
-        best = max(members, key=data_quality_score)
-        merged.append(best)
-
-    # Second pass handles syndicated jobs that use different URLs.
     by_identity: dict[str, JobListing] = {}
-    identity_collisions = 0
     for listing in merged:
         key = _similar_identity(listing)
         existing = by_identity.get(key)
         if existing is None:
             by_identity[key] = listing
             continue
-        # Require strong description similarity to avoid collapsing distinct openings.
         a = set(normalize_text(existing.description).split()) - _STOPWORDS
         b = set(normalize_text(listing.description).split()) - _STOPWORDS
         similarity = len(a & b) / max(1, len(a | b))
-        if similarity >= 0.35 or not existing.description or not listing.description:
-            identity_collisions += 1
+        # Empty descriptions are only mergeable when the canonical URL also matches;
+        # otherwise same title/company/location may represent separate requisitions.
+        if a and b and similarity >= 0.50:
             if data_quality_score(listing) > data_quality_score(existing):
                 by_identity[key] = listing
         else:
-            unique_key = key + f"|{listing.job_url}"
-            by_identity[unique_key] = listing
+            by_identity[key + "|" + canonical_url(listing.job_url)] = listing
 
     result = list(by_identity.values())
     return result, max(0, len(listings) - len(result))
 
 
 def relevance_score(listing: JobListing) -> float:
-    """Deterministic pre-AI ranking using profile-relevant signals only, never company prestige."""
-    text = " ".join([normalize_text(listing.title), normalize_text(listing.description)])
+    """Deterministic pre-AI ranking using profile relevance, never company prestige."""
+    text = " ".join((normalize_text(listing.title), normalize_text(listing.description)))
     title = normalize_title(listing.title)
     score = 0.0
-
     role_terms = ("software engineer", "software developer", "full stack", "frontend", "backend", "react", "node.js", "javascript", "typescript", "mern", "sde")
     stack_terms = ("react", "react.js", "node", "node.js", "javascript", "typescript", "mongodb", "express", "sql")
-    preferred_locations = ("bengaluru", "pune", "hyderabad", "gurugram", "gurgaon", "noida", "mumbai", "chennai", "remote", "india")
+    preferred_locations = ("bengaluru", "pune", "hyderabad", "gurugram", "noida", "mumbai", "chennai", "remote", "india")
     fresher_terms = ("fresher", "entry level", "entry-level", "new grad", "graduate", "0-1", "0–1", "0-2", "0–2", "junior")
     senior_terms = ("senior", "staff", "principal", "lead", "manager", "architect")
-
     score += min(30, 6 * sum(term in title for term in role_terms))
     score += min(25, 5 * sum(term in text for term in stack_terms))
     score += min(15, 5 * sum(term in normalize_location(listing.location) for term in preferred_locations))
     score += min(15, 5 * sum(term in text for term in fresher_terms))
     score -= min(30, 10 * sum(term in title for term in senior_terms))
-
     _, freshness = normalize_posting_date(listing.posting_date)
     score += {"FRESH": 15, "RECENT": 10, "STALE": -5, "UNKNOWN": 0}[freshness]
     score += data_quality_score(listing) * 0.15
@@ -195,13 +163,10 @@ def rank_candidates(listings: list[JobListing]) -> list[JobListing]:
 
 
 def quality_summary(raw_count: int, deduped: list[JobListing], eligible: list[JobListing], selected: list[JobListing], duplicates_removed: int) -> dict:
-    fresh = recent = stale = unknown = 0
+    buckets = {"FRESH": 0, "RECENT": 0, "STALE": 0, "UNKNOWN": 0}
     for listing in deduped:
         _, bucket = normalize_posting_date(listing.posting_date)
-        if bucket == "FRESH": fresh += 1
-        elif bucket == "RECENT": recent += 1
-        elif bucket == "STALE": stale += 1
-        else: unknown += 1
+        buckets[bucket] += 1
     qualities = [data_quality_score(item) for item in deduped]
     return {
         "raw_jobs": raw_count,
@@ -209,9 +174,9 @@ def quality_summary(raw_count: int, deduped: list[JobListing], eligible: list[Jo
         "duplicates_removed": duplicates_removed,
         "eligible_jobs": len(eligible),
         "ai_candidates": len(selected),
-        "fresh_jobs": fresh,
-        "recent_jobs": recent,
-        "stale_jobs": stale,
-        "unknown_date_jobs": unknown,
+        "fresh_jobs": buckets["FRESH"],
+        "recent_jobs": buckets["RECENT"],
+        "stale_jobs": buckets["STALE"],
+        "unknown_date_jobs": buckets["UNKNOWN"],
         "average_data_quality": round(sum(qualities) / len(qualities), 2) if qualities else 0.0,
     }
