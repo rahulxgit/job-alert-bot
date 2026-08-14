@@ -5,6 +5,9 @@ the jobspy library batches multiple sites in a single request), so rather
 than triplicate the fetch loop, this module does the real work and the
 three thin source modules just filter the result by site.
 """
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import pandas as pd
 from jobspy import scrape_jobs
 
@@ -30,49 +33,70 @@ def _scrape_one_combo(term: str, location: str):
     )
 
 
+def _run_combo(term: str, location: str):
+    """Execute one bounded JobSpy call without changing its timeout semantics."""
+    return run_with_timeout(
+        _scrape_one_combo,
+        args=(term, location),
+        timeout_seconds=config.JOBSPY_CALL_TIMEOUT_SECONDS,
+        label=f"jobspy '{term}' in '{location}'",
+    )
+
+
 def fetch_all_jobspy_listings() -> pd.DataFrame:
     """Fetch a bounded set of JobSpy term/location combinations once.
 
-    The old implementation expanded every search term against every location
-    on every run. With 22 terms x 2 locations, one run could issue 44 JobSpy
-    calls before downstream processing. JOBSPY_MAX_COMBINATIONS provides a
-    hard execution budget while keeping the search terms/location order
-    configurable. The result is still cached so LinkedIn and Google sources
-    never trigger a second scrape in the same process.
+    The search breadth is intentionally unchanged: JOBSPY_MAX_COMBINATIONS
+    still controls the exact number of combinations. Independent combinations
+    are now executed with a small bounded worker pool so wall-clock time is
+    reduced without reducing the number of searches or results requested.
     """
     global _cached_df
     if _cached_df is not None:
         return _cached_df
 
-    all_results = []
+    combinations = []
     max_combinations = max(1, int(config.JOBSPY_MAX_COMBINATIONS))
-    combinations_run = 0
-
     for term in config.SEARCH_TERMS:
         for location in config.LOCATIONS:
-            if combinations_run >= max_combinations:
-                log.info(
-                    "[JobSpy] Combination budget reached: %s/%s; stopping cleanly",
-                    combinations_run,
-                    max_combinations,
-                )
+            if len(combinations) >= max_combinations:
                 break
+            combinations.append((term, location))
+        if len(combinations) >= max_combinations:
+            break
 
-            combinations_run += 1
-            df = run_with_timeout(
-                _scrape_one_combo,
-                args=(term, location),
-                timeout_seconds=config.JOBSPY_CALL_TIMEOUT_SECONDS,
-                label=f"jobspy '{term}' in '{location}'",
-            )
+    if not combinations:
+        _cached_df = pd.DataFrame()
+        return _cached_df
+
+    configured_concurrency = int(os.environ.get("JOBSPY_MAX_CONCURRENCY", "4"))
+    concurrency = max(1, min(len(combinations), configured_concurrency))
+    log.info(
+        "[JobSpy] Running %s bounded combinations with concurrency=%s (budget=%s)",
+        len(combinations),
+        concurrency,
+        max_combinations,
+    )
+
+    all_results = []
+    with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="jobspy") as executor:
+        futures = {
+            executor.submit(_run_combo, term, location): (term, location)
+            for term, location in combinations
+        }
+        for future in as_completed(futures):
+            term, location = futures[future]
+            try:
+                df = future.result()
+            except Exception as exc:
+                log.warning("[JobSpy] '%s' in '%s' failed: %s", term, location, exc)
+                continue
             if df is not None and not df.empty:
                 all_results.append(df)
-        if combinations_run >= max_combinations:
-            break
 
     log.info(
         "[JobSpy] Completed %s bounded combinations (budget=%s)",
-        combinations_run,
+        len(combinations),
         max_combinations,
     )
 

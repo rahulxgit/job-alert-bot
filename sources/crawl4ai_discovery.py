@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import re
+from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
 from crawl4ai.deep_crawling import BestFirstCrawlingStrategy
 from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter
 from crawl4ai.deep_crawling.scorers import KeywordRelevanceScorer
@@ -28,11 +29,21 @@ _AGGREGATE_MARKERS = (
 )
 _JOB_PATH_MARKERS = (
     "/job/", "/jobs/", "/jobs/view/", "/vacancy/", "/position/", "/internship/",
+    "/viewjob",
 )
 _JOB_TEXT_SIGNALS = (
     "requirements", "qualifications", "responsibilities", "experience",
     "what you'll do", "what you will do", "apply", "skills", "education",
 )
+
+
+@dataclass(frozen=True)
+class DiscoveryMetrics:
+    seeds_attempted: int = 0
+    seeds_succeeded: int = 0
+    pages_seen: int = 0
+    jobs_discovered: int = 0
+    seed_failures: int = 0
 
 
 def _normalize_url(url: str) -> str:
@@ -73,13 +84,18 @@ def _looks_job_url(url: str, title: str = "") -> bool:
     title_low = (title or "").lower()
     if any(marker in low for marker in _AGGREGATE_MARKERS):
         return False
+    # Several sites use query-driven detail URLs (for example Indeed viewjob).
     if any(marker in low for marker in _JOB_PATH_MARKERS):
         return True
     job_title_signal = any(
         token in title_low
-        for token in ("software engineer", "developer", "sde", "frontend", "backend", "full stack", "intern")
+        for token in (
+            "software engineer", "developer", "sde", "frontend", "backend", "full stack",
+            "product engineer", "ai engineer", "ml engineer", "genai", "intern",
+        )
     )
-    return job_title_signal and len(urlparse(normalized).path.strip("/").split("/")) >= 2
+    path_segments = [part for part in urlparse(normalized).path.strip("/").split("/") if part]
+    return bool(job_title_signal and len(path_segments) >= 2)
 
 
 def _extract_links(markdown: str, base_url: str) -> list[str]:
@@ -156,7 +172,8 @@ def _strategy() -> BestFirstCrawlingStrategy:
     scorer = KeywordRelevanceScorer(
         keywords=[
             "software engineer", "software developer", "sde", "frontend", "backend",
-            "full stack", "react", "node", "javascript", "graduate", "fresher", "junior",
+            "full stack", "product engineer", "ai engineer", "ml engineer", "genai",
+            "react", "node", "javascript", "graduate", "fresher", "junior", "intern",
         ],
         weight=0.8,
     )
@@ -169,13 +186,42 @@ def _strategy() -> BestFirstCrawlingStrategy:
     )
 
 
-async def _discover() -> list[JobListing]:
+def _extract_result_markdown(result) -> tuple[str, str, str]:
+    url = _normalize_url(getattr(result, "url", "") or "")
+    markdown_obj = getattr(result, "markdown", "") or ""
+    markdown = getattr(markdown_obj, "raw_markdown", markdown_obj)
+    markdown = str(markdown).strip()
+    metadata = getattr(result, "metadata", {}) or {}
+    title = str(metadata.get("title") or "") if isinstance(metadata, dict) else ""
+    return url, markdown, title
+
+
+async def _crawl_seed(crawler, seed: str, run_config) -> tuple[str, list[JobListing], int, bool]:
+    """Crawl one seed and isolate failures so other seeds can continue."""
+    discovered: list[JobListing] = []
+    pages_seen = 0
+    try:
+        results = await crawler.arun(url=seed, config=run_config)
+        async for result in results:
+            pages_seen += 1
+            url, markdown, title = _extract_result_markdown(result)
+            if not url or not _allowed_host(url):
+                continue
+            if _looks_job_url(url, title) and _looks_like_job_text(markdown):
+                discovered.append(_to_listing(url, markdown, title))
+        return seed, discovered, pages_seen, True
+    except Exception as exc:
+        log.warning("[Crawl4AI] Discovery failed for seed %s: %s", seed, exc)
+        return seed, [], pages_seen, False
+
+
+async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
     seeds = [
         seed for seed in config.CRAWL4AI_DISCOVERY_SEED_URLS[: config.CRAWL4AI_DISCOVERY_MAX_SEEDS]
         if _allowed_host(seed)
     ]
     if not seeds:
-        return []
+        return [], DiscoveryMetrics()
 
     run_config = CrawlerRunConfig(
         deep_crawl_strategy=_strategy(),
@@ -184,35 +230,84 @@ async def _discover() -> list[JobListing]:
         preserve_https_for_internal_links=True,
     )
 
-    rows: list[JobListing] = []
-    seen: set[str] = set()
+    unique_rows: dict[str, JobListing] = {}
+    seed_successes = 0
+    seed_failures = 0
+    pages_seen = 0
+    semaphore = asyncio.Semaphore(max(1, config.CRAWL4AI_DISCOVERY_SEED_CONCURRENCY))
+
     async with AsyncWebCrawler(config=BrowserConfig(headless=True)) as crawler:
-        for seed in seeds:
-            try:
-                results = await crawler.arun(url=seed, config=run_config)
-                async for result in results:
-                    url = _normalize_url(getattr(result, "url", "") or seed)
-                    if not url or url in seen or not _allowed_host(url):
-                        continue
-                    seen.add(url)
-                    markdown_obj = getattr(result, "markdown", "") or ""
-                    markdown = getattr(markdown_obj, "raw_markdown", markdown_obj)
-                    markdown = str(markdown).strip()
-                    metadata = getattr(result, "metadata", {}) or {}
-                    title = str(metadata.get("title") or "") if isinstance(metadata, dict) else ""
-                    if _looks_job_url(url, title) and _looks_like_job_text(markdown):
-                        rows.append(_to_listing(url, markdown, title))
-                        log.info("[Crawl4AI] Discovered job: %s", url)
-                        if len(rows) >= config.CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES:
-                            return rows
-            except Exception as exc:
-                log.warning("[Crawl4AI] Discovery failed for seed %s: %s", seed, exc)
-    return rows
+        async def bounded_seed(seed: str):
+            async with semaphore:
+                return await _crawl_seed(crawler, seed, run_config)
+
+        results = await asyncio.gather(*(bounded_seed(seed) for seed in seeds))
+
+    for seed, rows, seed_pages_seen, succeeded in results:
+        pages_seen += seed_pages_seen
+        seed_successes += int(succeeded)
+        seed_failures += int(not succeeded)
+        log.info(
+            "[Crawl4AI] Seed %s: pages=%s jobs=%s status=%s",
+            seed,
+            seed_pages_seen,
+            len(rows),
+            "SUCCESS" if succeeded else "FAILED",
+        )
+        for row in rows:
+            unique_rows.setdefault(row.job_url, row)
+            if len(unique_rows) >= config.CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES:
+                break
+        if len(unique_rows) >= config.CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES:
+            break
+
+    rows = list(unique_rows.values())[: config.CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES]
+    metrics = DiscoveryMetrics(
+        seeds_attempted=len(seeds),
+        seeds_succeeded=seed_successes,
+        pages_seen=pages_seen,
+        jobs_discovered=len(rows),
+        seed_failures=seed_failures,
+    )
+    log.info(
+        "[Crawl4AI] Discovery metrics: seeds=%s succeeded=%s failed=%s pages=%s jobs=%s",
+        metrics.seeds_attempted,
+        metrics.seeds_succeeded,
+        metrics.seed_failures,
+        metrics.pages_seen,
+        metrics.jobs_discovered,
+    )
+    return rows, metrics
+
+
+async def _healthcheck() -> str:
+    if not config.CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED:
+        log.info("[Crawl4AI] Health check disabled")
+        return config.CRAWL4AI_DISCOVERY_HEALTHCHECK_URL
+    run_config = CrawlerRunConfig(
+        cache_mode=CacheMode.BYPASS,
+        page_timeout=max(5000, config.CRAWL4AI_DISCOVERY_TIMEOUT * 1000),
+    )
+    async with AsyncWebCrawler(config=BrowserConfig(headless=True)) as crawler:
+        result = await crawler.arun(url=config.CRAWL4AI_DISCOVERY_HEALTHCHECK_URL, config=run_config)
+        if not result.success:
+            raise RuntimeError(getattr(result, "error_message", "health check crawl failed"))
+        markdown_obj = getattr(result, "markdown", "") or ""
+        markdown = getattr(markdown_obj, "raw_markdown", markdown_obj)
+        if len(str(markdown).strip()) < 50:
+            raise RuntimeError("health check returned insufficient markdown")
+    return config.CRAWL4AI_DISCOVERY_HEALTHCHECK_URL
+
+
+def run_healthcheck() -> str:
+    """Run a small real crawl used by CI/diagnostics."""
+    return asyncio.run(_healthcheck())
 
 
 def discover_job_listings() -> list[JobListing]:
     try:
-        return asyncio.run(_discover())
+        rows, _ = asyncio.run(_discover())
+        return rows
     except RuntimeError as exc:
         raise RuntimeError(f"Crawl4AI discovery execution failed: {exc}") from exc
 

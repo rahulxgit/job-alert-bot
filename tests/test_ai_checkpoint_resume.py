@@ -41,7 +41,7 @@ def test_checkpoint_resumes_after_worker_interruption(tmp_path, monkeypatch):
 
     jobs = [_job(i) for i in range(5)]
 
-    def interrupted_eval(job, skip_gemini_retries=False):
+    def interrupted_eval(job, skip_gemini_retries=False, deadline=None):
         if job.job_url.endswith("/2"):
             raise RuntimeError("simulated worker interruption")
         return _verdict(), False
@@ -65,7 +65,7 @@ def test_checkpoint_resumes_after_worker_interruption(tmp_path, monkeypatch):
 
     resumed_calls = []
 
-    def resumed_eval(job, skip_gemini_retries=False):
+    def resumed_eval(job, skip_gemini_retries=False, deadline=None):
         resumed_calls.append(job.job_url)
         return _verdict(), False
 

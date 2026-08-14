@@ -44,7 +44,7 @@ def test_ai_reviews_run_concurrently_and_checkpoint_is_valid(tmp_path, monkeypat
     active = 0
     max_active = 0
 
-    def fake_eval(job, skip_gemini_retries=False):
+    def fake_eval(job, skip_gemini_retries=False, deadline=None):
         nonlocal active, max_active
         active += 1
         max_active = max(max_active, active)
@@ -54,7 +54,7 @@ def test_ai_reviews_run_concurrently_and_checkpoint_is_valid(tmp_path, monkeypat
 
     monkeypatch.setattr(evaluator, "evaluate_listing", fake_eval)
 
-    reviewed = evaluator.review_candidates([_job(i) for i in range(4)])
+    reviewed = evaluator.review_candidates([_job(i) for i in range(4)], deadline=time.monotonic() + 10)
 
     assert len(reviewed) == 4
     assert max_active > 1
@@ -73,14 +73,14 @@ def test_unresolved_jobs_remain_in_retry_queue(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "MAX_LLM_CANDIDATES", 2)
     monkeypatch.setattr(config, "AI_MAX_CONCURRENCY", 2)
 
-    def fake_eval(job, skip_gemini_retries=False):
+    def fake_eval(job, skip_gemini_retries=False, deadline=None):
         if job.job_url.endswith("/1"):
             return None, True
         return _verdict(), False
 
     monkeypatch.setattr(evaluator, "evaluate_listing", fake_eval)
 
-    reviewed = evaluator.review_candidates([_job(0), _job(1)])
+    reviewed = evaluator.review_candidates([_job(0), _job(1)], deadline=time.monotonic() + 10)
 
     assert [job.job_url for job in reviewed] == [_job(0).job_url]
     payload = json.loads(failed_path.read_text(encoding="utf-8"))
