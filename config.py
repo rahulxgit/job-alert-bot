@@ -197,6 +197,10 @@ GEMINI_MAX_RETRIES = int(os.environ.get("GEMINI_MAX_RETRIES", "1"))
 GEMINI_MAX_RETRY_WAIT_SECONDS = int(os.environ.get("GEMINI_MAX_RETRY_WAIT_SECONDS", "10"))
 GEMINI_QUOTA_COOLDOWN_SECONDS = int(os.environ.get("GEMINI_QUOTA_COOLDOWN_SECONDS", "3600"))
 
+# --- AI throughput / observability (Phase 6) --------------------------------
+AI_MAX_CONCURRENCY = max(1, int(os.environ.get("AI_MAX_CONCURRENCY", "4")))
+AI_METRICS_ENABLED = os.environ.get("AI_METRICS_ENABLED", "true").lower() == "true"
+
 # --- AI providers -----------------------------------------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash-lite"
@@ -218,10 +222,15 @@ GMAIL_TO = os.environ.get("ALERT_EMAIL_TO", "")
 GMAIL_CLIENT_ID = os.environ.get("GMAIL_CLIENT_ID", "")
 GMAIL_CLIENT_SECRET = os.environ.get("GMAIL_CLIENT_SECRET", "")
 GMAIL_REFRESH_TOKEN = os.environ.get("GMAIL_REFRESH_TOKEN", "")
-_REQUIRED_FOR_REAL_RUN = ["GEMINI_API_KEY", "GOOGLE_SHEET_ID", "GOOGLE_SERVICE_ACCOUNT_JSON", "GMAIL_TO", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"]
 
 
 def validate():
-    missing = [name for name in _REQUIRED_FOR_REAL_RUN if not globals().get(name)]
+    missing = []
+    if not GOOGLE_SHEET_ID:
+        missing.append("GOOGLE_SHEET_ID")
+    if not GOOGLE_SERVICE_ACCOUNT_JSON:
+        missing.append("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not GMAIL_TO:
+        missing.append("ALERT_EMAIL_TO")
     if missing:
-        raise RuntimeError(", ".join(missing))
+        raise RuntimeError("Missing required environment variables: " + ", ".join(missing))
