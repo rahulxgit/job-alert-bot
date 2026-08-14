@@ -126,9 +126,10 @@ def deduplicate_jobs(listings: list[JobListing]) -> tuple[list[JobListing], int]
         union = len(a | b)
         containment = intersection / max(1, min(len(a), len(b)))
         jaccard = intersection / max(1, union)
-        # A short syndicated description can be a subset of the expanded source.
-        # Require strong token containment or broad overlap before collapsing records.
-        if a and b and (containment >= 0.50 or jaccard >= 0.50):
+        # A short syndicated description can be a subset of the expanded source,
+        # but the containment must be strong enough to avoid merging separate
+        # openings that merely share generic words such as "role" or "experience".
+        if a and b and (containment >= 0.70 or jaccard >= 0.50):
             if data_quality_score(listing) > data_quality_score(existing):
                 by_identity[key] = listing
         else:
