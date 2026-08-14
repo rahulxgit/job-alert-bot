@@ -131,7 +131,8 @@ def _normalize_url(url: str) -> str:
 
 def dedupe(listings: list[JobListing]) -> list[JobListing]:
     """Backward-compatible URL dedupe wrapper; Phase 8 adds content-aware dedupe."""
-    unique, _ = deduplicate_jobs(listings)
+    with_urls = [listing for listing in listings if listing.job_url]
+    unique, _ = deduplicate_jobs(with_urls)
     for listing in unique:
         listing.job_url = canonical_url(listing.job_url)
     return unique
