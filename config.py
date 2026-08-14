@@ -102,45 +102,18 @@ CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX
 CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS", "400"))
 CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS", "6000"))
 CRAWL4AI_DISCOVERY_LOCATIONS = ["Bengaluru", "Bangalore", "Pune", "Hyderabad", "Gurugram", "Gurgaon", "Noida", "Delhi NCR", "Mumbai", "Chennai", "Kolkata", "Ahmedabad", "Remote", "India"]
-# Discovery intentionally stays host allowlisted. These are entry points rather
-# than a general unrestricted web crawl, which keeps runtime, scope, and abuse
-# risk bounded while adding the sources requested for startup-focused coverage.
 CRAWL4AI_DISCOVERY_SEED_URLS = [
-    "https://boards.greenhouse.io/",
-    "https://jobs.lever.co/",
-    "https://jobs.ashbyhq.com/",
-    "https://www.naukri.com/",
-    "https://internshala.com/jobs/",
-    "https://wellfound.com/jobs",
-    "https://www.linkedin.com/jobs/",
-    "https://www.indeed.com/jobs",
-    "https://www.ycombinator.com/jobs",
-    "https://cutshort.io/jobs",
-    "https://www.instahyre.com/",
-    "https://www.hiringcafe.com/",
+    "https://boards.greenhouse.io/", "https://jobs.lever.co/", "https://jobs.ashbyhq.com/",
+    "https://www.naukri.com/", "https://internshala.com/jobs/", "https://wellfound.com/jobs",
+    "https://www.linkedin.com/jobs/", "https://www.indeed.com/jobs", "https://www.ycombinator.com/jobs",
+    "https://cutshort.io/jobs", "https://www.instahyre.com/", "https://www.hiringcafe.com/",
 ]
 CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS = [
-    "boards.greenhouse.io",
-    "jobs.lever.co",
-    "jobs.ashbyhq.com",
-    "naukri.com",
-    "www.naukri.com",
-    "internshala.com",
-    "www.internshala.com",
-    "wellfound.com",
-    "www.wellfound.com",
-    "linkedin.com",
-    "www.linkedin.com",
-    "indeed.com",
-    "www.indeed.com",
-    "ycombinator.com",
-    "www.ycombinator.com",
-    "cutshort.io",
-    "www.cutshort.io",
-    "instahyre.com",
-    "www.instahyre.com",
-    "hiringcafe.com",
-    "www.hiringcafe.com",
+    "boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "naukri.com", "www.naukri.com",
+    "internshala.com", "www.internshala.com", "wellfound.com", "www.wellfound.com",
+    "linkedin.com", "www.linkedin.com", "indeed.com", "www.indeed.com",
+    "ycombinator.com", "www.ycombinator.com", "cutshort.io", "www.cutshort.io",
+    "instahyre.com", "www.instahyre.com", "hiringcafe.com", "www.hiringcafe.com",
 ]
 CRAWL4AI_DISCOVERY_SEED_CONCURRENCY = int(os.environ.get("CRAWL4AI_DISCOVERY_SEED_CONCURRENCY", "3"))
 CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED = os.environ.get("CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED", "true").lower() == "true"
@@ -180,7 +153,6 @@ PROFILE_KEYWORDS = [
 FRESHER_SIGNALS = ["sde 1", "sde-1", "sde i", "software development engineer i", "fresher", "0-1 year", "0-2 year", "0 - 2 year", "0-2 yrs", "entry level", "entry-level", "graduate engineer", "graduate trainee", "junior", "campus hire", "new grad", "intern"]
 SENIORITY_EXCLUSIONS = ["senior", "sr.", "sr ", "staff", "principal", "lead", "architect", "manager", "director", "head of", "vp ", "9-12 yr", "6-9 yr", "5-8 yr", "8+ year", "10+ year", "7+ year", "6+ year", "5+ year", "4+ year"]
 
-# Keep the broad AI candidate pool; precision is enforced before the LLM stage.
 MAX_LLM_CANDIDATES = int(os.environ.get("MAX_LLM_CANDIDATES", "300"))
 LLM_FIT_THRESHOLD = 70
 MIN_LIGHTWEIGHT_SCORE = int(os.environ.get("MIN_LIGHTWEIGHT_SCORE", "6"))
@@ -188,32 +160,85 @@ MIN_CANDIDATES_PER_SOURCE = int(os.environ.get("MIN_CANDIDATES_PER_SOURCE", "5")
 CONSECUTIVE_RATE_LIMIT_BREAKER = 5
 
 ROLE_MATCH_TERMS = [
-    "software engineer", "software development engineer", "software developer",
-    "sde", "full stack developer", "full stack engineer", "fullstack developer",
-    "frontend developer", "frontend engineer", "backend developer", "backend engineer",
-    "mern developer", "mern stack developer", "react developer", "react.js developer",
-    "node.js developer", "javascript developer", "typescript developer", "product engineer",
-    "application developer", "associate software engineer", "graduate software engineer",
-    "junior software engineer", "junior developer", "web developer",
+    "software engineer", "software development engineer", "software developer", "sde",
+    "full stack developer", "full stack engineer", "fullstack developer", "frontend developer",
+    "frontend engineer", "backend developer", "backend engineer", "mern developer",
+    "mern stack developer", "react developer", "react.js developer", "node.js developer",
+    "javascript developer", "typescript developer", "product engineer", "application developer",
+    "associate software engineer", "graduate software engineer", "junior software engineer",
+    "junior developer", "web developer",
 ]
 CORE_TECH_TERMS = [
-    "react", "react.js", "reactjs", "node", "node.js", "express", "express.js",
-    "javascript", "typescript", "next.js", "nextjs", "mern", "mongodb", "rest api",
-    "api development", "html", "css", "sql", "postgresql", "mysql", "supabase",
-    "firebase", "redux", "react query", "tailwindcss", "docker", "git", "github",
+    "react", "react.js", "reactjs", "node", "node.js", "express", "express.js", "javascript",
+    "typescript", "next.js", "nextjs", "mern", "mongodb", "rest api", "api development", "html",
+    "css", "sql", "postgresql", "mysql", "supabase", "firebase", "redux", "react query", "tailwindcss",
+    "docker", "git", "github",
 ]
-PREFERRED_LOCATIONS = [
-    "bengaluru", "bangalore", "pune", "hyderabad", "gurgaon", "gurugram", "noida",
-    "delhi ncr", "mumbai", "chennai", "india", "remote", "work from home", "wfh",
-]
-NON_PREFERRED_LOCATION_SIGNALS = [
-    "united states", "usa", "canada", "uk", "united kingdom", "australia", "germany",
-    "france", "singapore", "dubai", "uae", "europe",
-]
+PREFERRED_LOCATIONS = ["bengaluru", "bangalore", "pune", "hyderabad", "gurgaon", "gurugram", "noida", "delhi ncr", "mumbai", "chennai", "india", "remote", "work from home", "wfh"]
+NON_PREFERRED_LOCATION_SIGNALS = ["united states", "usa", "canada", "uk", "united kingdom", "australia", "germany", "france", "singapore", "dubai", "uae", "europe"]
 EDUCATION_HARD_EXCLUSION_SIGNALS = [
-    "b.tech in computer science only", "b.e. in computer science only",
-    "b.e./b.tech in computer science only", "b.e./b.tech in cse only",
-    "b.tech in cse only", "b.tech in information technology only",
-    "b.e./b.tech in cs/it only", "computer science degree required",
-    "computer science or information technology degree..." 
+    "b.tech in computer science only", "b.e. in computer science only", "b.e./b.tech in computer science only",
+    "b.e./b.tech in cse only", "b.tech in cse only", "b.tech in information technology only",
+    "b.e./b.tech in cs/it only", "computer science degree required", "computer science or information technology degree required",
+    "only candidates with computer science",
 ]
+EDUCATION_OPEN_SIGNALS = [
+    "any engineering branch", "all engineering branches", "any branch", "any degree", "bachelor's degree",
+    "bachelors degree", "engineering degree", "technology or engineering", "computer science or related field",
+]
+FRESHNESS_DAYS = int(os.environ.get("PREFILTER_FRESHNESS_DAYS", "30"))
+
+LLM_EVALUATION_BUDGET_SECONDS = int(os.environ.get("LLM_EVALUATION_BUDGET_SECONDS", "86400"))
+
+# --- AI provider resilience -------------------------------------------------
+AI_GATEWAY_TIMEOUT_SECONDS = int(os.environ.get("AI_GATEWAY_TIMEOUT_SECONDS", "12"))
+AI_GATEWAY_MAX_RETRIES = int(os.environ.get("AI_GATEWAY_MAX_RETRIES", "1"))
+AI_GATEWAY_RETRY_DELAY_SECONDS = float(os.environ.get("AI_GATEWAY_RETRY_DELAY_SECONDS", "2"))
+GEMINI_TIMEOUT_SECONDS = int(os.environ.get("GEMINI_TIMEOUT_SECONDS", "30"))
+GEMINI_MAX_RETRIES = int(os.environ.get("GEMINI_MAX_RETRIES", "1"))
+GEMINI_MAX_RETRY_WAIT_SECONDS = int(os.environ.get("GEMINI_MAX_RETRY_WAIT_SECONDS", "10"))
+GEMINI_QUOTA_COOLDOWN_SECONDS = int(os.environ.get("GEMINI_QUOTA_COOLDOWN_SECONDS", "3600"))
+
+# --- AI throughput / observability ------------------------------------------
+AI_MAX_CONCURRENCY = max(1, int(os.environ.get("AI_MAX_CONCURRENCY", "4")))
+AI_METRICS_ENABLED = os.environ.get("AI_METRICS_ENABLED", "true").lower() == "true"
+
+# --- AI provider backpressure ------------------------------------------------
+GATEWAY_MAX_CONCURRENCY = max(1, int(os.environ.get("GATEWAY_MAX_CONCURRENCY", str(AI_MAX_CONCURRENCY))))
+GEMINI_MAX_CONCURRENCY = max(1, int(os.environ.get("GEMINI_MAX_CONCURRENCY", "2")))
+GEMINI_SHARED_BACKOFF_SECONDS = max(1.0, float(os.environ.get("GEMINI_SHARED_BACKOFF_SECONDS", "10")))
+GATEWAY_SHARED_BACKOFF_SECONDS = max(0.0, float(os.environ.get("GATEWAY_SHARED_BACKOFF_SECONDS", "2")))
+
+# --- AI providers ------------------------------------------------------------
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+AI_GATEWAY_URL = os.environ.get("AI_GATEWAY_URL") or "https://ai-gateway-wx35.onrender.com"
+
+# --- Recruiter email enrichment ---------------------------------------------
+HUNTER_API_KEY = os.environ.get("HUNTER_API_KEY", "")
+HUNTER_MAX_CALLS_PER_RUN = 1
+APOLLO_API_KEY = os.environ.get("APOLLO_API_KEY", "")
+APOLLO_MAX_CALLS_PER_RUN = 1
+APOLLO_TARGET_TITLES = ["Recruiter", "Talent Acquisition", "HR", "Hiring Manager", "Human Resources"]
+COMPANY_SUFFIXES_TO_STRIP = [" pvt ltd", " pvt. ltd.", " private limited", " limited", " llp", " inc.", " inc", " llc", " technologies", " technology", " labs", " solutions", " services", " systems", " india", " co.", " ltd"]
+
+# --- Google Sheets / Gmail ---------------------------------------------------
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
+GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+GMAIL_TO = os.environ.get("ALERT_EMAIL_TO", "")
+GMAIL_CLIENT_ID = os.environ.get("GMAIL_CLIENT_ID", "")
+GMAIL_CLIENT_SECRET = os.environ.get("GMAIL_CLIENT_SECRET", "")
+GMAIL_REFRESH_TOKEN = os.environ.get("GMAIL_REFRESH_TOKEN", "")
+
+
+def validate():
+    missing = []
+    if not GOOGLE_SHEET_ID:
+        missing.append("GOOGLE_SHEET_ID")
+    if not GOOGLE_SERVICE_ACCOUNT_JSON:
+        missing.append("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not GMAIL_TO:
+        missing.append("ALERT_EMAIL_TO")
+    if missing:
+        raise RuntimeError("Missing required environment variables: " + ", ".join(missing))
