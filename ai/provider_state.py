@@ -1,10 +1,15 @@
-"""Provider lifecycle state and telemetry for concurrent AI evaluation."""
+"""Provider lifecycle state and telemetry for concurrent AI evaluation.
+
+The evaluator already owns retries/backoff. This module adds an independent,
+thread-safe observability layer that classifies provider health without changing
+fallback semantics.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock, local
+from threading import Lock
 from typing import Any
 import json
 import os
@@ -21,7 +26,6 @@ PROVIDER_STATES = {
 }
 
 _PROVIDER_ARTIFACT = Path("run-artifacts/ai-provider-state.json")
-_thread_context = local()
 
 
 @dataclass
@@ -53,7 +57,11 @@ class _ProviderRecord:
             "invalid_responses": self.invalid_responses,
             "other_errors": self.other_errors,
             "recovery_count": self.recovery_count,
-            "average_latency_seconds": round(self.total_latency_seconds / self.requests, 3) if self.requests else 0.0,
+            "average_latency_seconds": round(
+                self.total_latency_seconds / self.requests, 3
+            )
+            if self.requests
+            else 0.0,
             "last_error": self.last_error,
             "last_transition_at": self.last_transition_at,
             "cooldown_active": self.cooldown_until > time.monotonic(),
@@ -72,22 +80,6 @@ def _record_for(provider: str) -> _ProviderRecord:
     return _records.setdefault(provider, _ProviderRecord(last_transition_at=_utc_now()))
 
 
-def _context() -> dict[str, Any]:
-    ctx = getattr(_thread_context, "value", None)
-    if ctx is None:
-        ctx = {"provider": None, "provider_attempts": 0, "last_failure": None}
-        _thread_context.value = ctx
-    return ctx
-
-
-def reset_thread_context() -> None:
-    _thread_context.value = {"provider": None, "provider_attempts": 0, "last_failure": None}
-
-
-def get_thread_context() -> dict[str, Any]:
-    return dict(_context())
-
-
 def _persist_locked() -> None:
     _PROVIDER_ARTIFACT.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -100,19 +92,12 @@ def _persist_locked() -> None:
 
 
 def record_request(provider: str) -> None:
-    ctx = _context()
-    ctx["provider"] = provider
-    ctx["provider_attempts"] += 1
-    ctx["last_failure"] = None
     with _lock:
         _record_for(provider).requests += 1
         _persist_locked()
 
 
 def record_success(provider: str, latency_seconds: float) -> None:
-    ctx = _context()
-    ctx["provider"] = provider
-    ctx["last_failure"] = None
     with _lock:
         record = _record_for(provider)
         previous_state = record.state
@@ -125,16 +110,19 @@ def record_success(provider: str, latency_seconds: float) -> None:
             record.recovery_count += 1
             record.state = "RECOVERING"
         record.last_transition_at = _utc_now()
+        # A successful recovery request proves the provider is usable again.
         if record.state == "RECOVERING":
             record.state = "AVAILABLE"
         _persist_locked()
 
 
-def record_failure(provider: str, kind: str, latency_seconds: float = 0.0, cooldown_seconds: float = 0.0) -> None:
+def record_failure(
+    provider: str,
+    kind: str,
+    latency_seconds: float = 0.0,
+    cooldown_seconds: float = 0.0,
+) -> None:
     normalized = kind.upper()
-    ctx = _context()
-    ctx["provider"] = provider
-    ctx["last_failure"] = normalized
     with _lock:
         record = _record_for(provider)
         record.consecutive_failures += 1
@@ -157,7 +145,12 @@ def record_failure(provider: str, kind: str, latency_seconds: float = 0.0, coold
             record.state = "DEGRADED"
 
         if cooldown_seconds > 0:
-            record.cooldown_until = max(record.cooldown_until, time.monotonic() + cooldown_seconds)
+            record.cooldown_until = max(
+                record.cooldown_until, time.monotonic() + cooldown_seconds
+            )
+
+        # Keep this telemetry aligned with the existing evaluator's effective
+        # circuit-breaking behavior without replacing that implementation.
         if record.consecutive_failures >= 3:
             record.state = "CIRCUIT_OPEN"
         record.last_transition_at = _utc_now()
@@ -170,7 +163,6 @@ def snapshot() -> dict[str, Any]:
 
 
 def reset_for_tests() -> None:
-    reset_thread_context()
     with _lock:
         _records.clear()
         if _PROVIDER_ARTIFACT.exists():

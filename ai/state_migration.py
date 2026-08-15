@@ -3,17 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ai.state import (
-    EvaluationState,
-    PASSED,
-    REJECTED,
-    RETRYABLE_ERROR,
-    EVALUATED,
-    PERMANENT_ERROR,
-    _safe_int,
-)
-
-_TERMINAL_MIGRATED_URLS: set[str] = set()
+from ai.state import EvaluationState, QUEUED, RETRYABLE_ERROR, DEADLINE_EXCEEDED, PASSED, REJECTED, EVALUATED
 
 
 def _verdict_to_status(row: dict[str, Any]) -> str:
@@ -22,17 +12,21 @@ def _verdict_to_status(row: dict[str, Any]) -> str:
     decision = str(row.get("decision") or "").strip().lower()
     if decision == "reject":
         return REJECTED
-    if decision in {"strong_match", "good_match"}:
-        return PASSED if row.get("fresher_appropriate") is True else REJECTED
-    if decision == "weak_match":
+    if decision in {"strong_match", "good_match", "weak_match"}:
+        try:
+            return PASSED if bool(row.get("fresher_appropriate")) else REJECTED
+        except (TypeError, ValueError):
+            return EVALUATED
+    score = row.get("fit_score")
+    try:
+        score_value = int(score)
+    except (TypeError, ValueError):
         return EVALUATED
-    score = _safe_int(row.get("fit_score"), 0)
-    return PASSED if score >= 70 and row.get("fresher_appropriate") is True else REJECTED
+    return PASSED if score_value >= 70 and row.get("fresher_appropriate") is True else REJECTED
 
 
 def migrate_legacy_progress(payload: dict[str, Any] | None) -> list[EvaluationState]:
     """Convert completed checkpoint entries into unified evaluation states."""
-    _TERMINAL_MIGRATED_URLS.clear()
     if not isinstance(payload, dict):
         return []
     rows = payload.get("evaluated_jobs", {})
@@ -45,9 +39,8 @@ def migrate_legacy_progress(payload: dict[str, Any] | None) -> list[EvaluationSt
         state = EvaluationState(
             job_url=str(url),
             status=_verdict_to_status(row),
-            attempts=max(1, _safe_int(row.get("attempts"), 1)),
+            attempts=max(1, int(row.get("attempts") or 1)),
             provider=row.get("provider"),
-            provider_attempts=_safe_int(row.get("provider_attempts"), 0),
             last_error=row.get("last_error"),
             last_attempt_at=row.get("last_attempt_at"),
             evaluation_key=row.get("evaluation_key"),
@@ -57,18 +50,16 @@ def migrate_legacy_progress(payload: dict[str, Any] | None) -> list[EvaluationSt
                 for key, value in row.items()
                 if key not in {
                     "job_url", "evaluation_key", "attempts", "provider",
-                    "provider_attempts", "last_error", "last_attempt_at", "updated_at",
+                    "last_error", "last_attempt_at", "updated_at",
                 }
             },
         )
         states.append(state)
-        if state.status in {PASSED, REJECTED, PERMANENT_ERROR}:
-            _TERMINAL_MIGRATED_URLS.add(state.job_url)
     return states
 
 
 def migrate_legacy_retry_jobs(jobs: list[dict[str, Any]] | None) -> list[EvaluationState]:
-    """Convert failed-ai-jobs entries to RETRYABLE_ERROR states safely."""
+    """Convert failed-ai-jobs entries to RETRYABLE_ERROR states."""
     if not isinstance(jobs, list):
         return []
     states: list[EvaluationState] = []
@@ -76,15 +67,14 @@ def migrate_legacy_retry_jobs(jobs: list[dict[str, Any]] | None) -> list[Evaluat
         if not isinstance(job, dict):
             continue
         url = str(job.get("job_url") or "").strip()
-        if not url or url in _TERMINAL_MIGRATED_URLS:
+        if not url:
             continue
         states.append(
             EvaluationState(
                 job_url=url,
                 status=RETRYABLE_ERROR,
-                attempts=_safe_int(job.get("attempts"), _safe_int(job.get("attempt_count"), 0)),
+                attempts=max(0, int(job.get("attempts") or job.get("attempt_count") or 0)),
                 provider=job.get("provider"),
-                provider_attempts=_safe_int(job.get("provider_attempts"), 0),
                 last_error=job.get("last_error") or "legacy_retry_queue",
                 next_retry_at=job.get("next_retry_at"),
                 last_attempt_at=job.get("last_attempt_at"),
@@ -92,29 +82,3 @@ def migrate_legacy_retry_jobs(jobs: list[dict[str, Any]] | None) -> list[Evaluat
             )
         )
     return states
-
-
-MIGRATION_PRECEDENCE = {
-    PASSED: 100,
-    REJECTED: 100,
-    PERMANENT_ERROR: 95,
-    EVALUATED: 90,
-    RETRYABLE_ERROR: 40,
-}
-
-
-def resolve_migration_conflicts(states: list[EvaluationState]) -> list[EvaluationState]:
-    """Keep the strongest state when the legacy files disagree on one URL."""
-    by_url: dict[str, EvaluationState] = {}
-    for state in states:
-        current = by_url.get(state.job_url)
-        if current is None:
-            by_url[state.job_url] = state
-            continue
-        current_rank = MIGRATION_PRECEDENCE.get(current.status, 0)
-        candidate_rank = MIGRATION_PRECEDENCE.get(state.status, 0)
-        if candidate_rank > current_rank or (
-            candidate_rank == current_rank and (state.updated_at or "") > (current.updated_at or "")
-        ):
-            by_url[state.job_url] = state
-    return list(by_url.values())

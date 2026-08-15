@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Iterable
 
-from ai.state import EvaluationState, STATE_VERSION, from_dict
+from ai.state import EVALUATED, EvaluationState, PASSED, REJECTED, STATE_VERSION, from_dict
 
 try:
     import fcntl
@@ -48,12 +48,29 @@ class AIStateStore:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             handle.close()
 
+    def _completed_previous_run(self) -> bool:
+        progress_path = self.path.with_name("ai-progress.json")
+        if not progress_path.exists():
+            return False
+        try:
+            payload = json.loads(progress_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return False
+        return isinstance(payload, dict) and payload.get("status") == "completed"
+
     def load(self) -> dict[str, EvaluationState]:
         with self._lock:
             if not self._loaded:
                 with self._file_lock():
                     self._states = self._read_locked()
                     changed = False
+                    fresh_run = self._completed_previous_run()
+                    if fresh_run:
+                        # A completed checkpoint marks terminal results as historical.
+                        # Keep them durable, but make them non-resumable for the next run.
+                        for state in self._states.values():
+                            if state.status in {EVALUATED, PASSED, REJECTED}:
+                                state.evaluation_key = None
                     for state in self._states.values():
                         if state.is_stale():
                             state.mark_stale()
