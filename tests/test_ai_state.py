@@ -1,4 +1,4 @@
-from ai.state import EvaluationState, PASSED, RETRYABLE_ERROR, DEADLINE_EXCEEDED, EVALUATING, from_dict
+from ai.state import EvaluationState, PASSED, REJECTED, RETRYABLE_ERROR, DEADLINE_EXCEEDED, EVALUATING, from_dict
 from ai.state_migration import migrate_legacy_progress, migrate_legacy_retry_jobs
 from ai.state_store import AIStateStore
 
@@ -26,22 +26,36 @@ def test_state_round_trip_and_legacy_aliases() -> None:
     assert restored.attempts == 2
 
 
-def test_legacy_progress_and_retry_queue_migrate() -> None:
+def test_legacy_progress_preserves_acceptance_semantics() -> None:
     progress = migrate_legacy_progress({
         "evaluated_jobs": {
-            "https://example.com/job": {
-                "job_url": "https://example.com/job",
+            "https://example.com/pass": {
+                "job_url": "https://example.com/pass",
                 "fit_score": 82,
                 "fresher_appropriate": True,
+                "decision": "good_match",
                 "evaluation_key": "k1",
-            }
+            },
+            "https://example.com/reject": {
+                "job_url": "https://example.com/reject",
+                "fit_score": 95,
+                "fresher_appropriate": True,
+                "decision": "reject",
+                "evaluation_key": "k2",
+            },
         }
     })
+    by_url = {state.job_url: state.status for state in progress}
+    assert by_url["https://example.com/pass"] == PASSED
+    assert by_url["https://example.com/reject"] == REJECTED
+
+
+def test_legacy_retry_queue_migrates_to_retryable() -> None:
     retry = migrate_legacy_retry_jobs([
         {"job_url": "https://example.com/retry", "attempts": 3, "last_error": "timeout"}
     ])
-    assert progress[0].status == PASSED
     assert retry[0].status == RETRYABLE_ERROR
+    assert retry[0].attempts == 3
 
 
 def test_store_is_atomic_and_authoritative(tmp_path) -> None:
