@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -10,9 +11,14 @@ from typing import Iterable
 
 from ai.state import EvaluationState, STATE_VERSION, from_dict
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
+
 
 STATE_PATH = Path("run-artifacts/ai-state.json")
-STATE_META_VERSION = 1
+STATE_META_VERSION = 2
 
 
 class AIStateStore:
@@ -27,46 +33,70 @@ class AIStateStore:
         self._lock = Lock()
         self._states: dict[str, EvaluationState] = {}
         self._loaded = False
+        self._lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+
+    @contextmanager
+    def _file_lock(self):
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self._lock_path.open("a+", encoding="utf-8")
+        try:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
 
     def load(self) -> dict[str, EvaluationState]:
         with self._lock:
-            if self._loaded:
-                return dict(self._states)
-            self._states = self._read_locked()
-            self._loaded = True
+            if not self._loaded:
+                with self._file_lock():
+                    self._states = self._read_locked()
+                    changed = False
+                    for state in self._states.values():
+                        if state.is_stale():
+                            state.mark_stale()
+                            changed = True
+                    self._loaded = True
+                    if changed:
+                        self._write_locked()
             return dict(self._states)
 
     def get(self, job_url: str) -> EvaluationState | None:
-        self.load()
-        with self._lock:
-            return self._states.get(job_url)
+        return self.load().get(job_url)
 
     def upsert(self, state: EvaluationState) -> None:
         if not state.job_url:
             raise ValueError("job_url is required for AI state")
-        self.load()
         with self._lock:
-            self._states[state.job_url] = state
-            self._write_locked()
+            with self._file_lock():
+                disk_states = self._read_locked()
+                disk_states[state.job_url] = state
+                self._states = disk_states
+                self._loaded = True
+                self._write_locked()
 
     def upsert_many(self, states: Iterable[EvaluationState]) -> None:
-        self.load()
         with self._lock:
-            for state in states:
-                if state.job_url:
-                    self._states[state.job_url] = state
-            self._write_locked()
+            with self._file_lock():
+                disk_states = self._read_locked()
+                for state in states:
+                    if state.job_url:
+                        disk_states[state.job_url] = state
+                self._states = disk_states
+                self._loaded = True
+                self._write_locked()
 
     def snapshot(self) -> dict[str, dict]:
-        self.load()
-        with self._lock:
-            return {url: state.to_dict() for url, state in self._states.items()}
+        return {url: state.to_dict() for url, state in self.load().items()}
 
     def replace_all(self, states: Iterable[EvaluationState]) -> None:
         with self._lock:
-            self._states = {state.job_url: state for state in states if state.job_url}
-            self._loaded = True
-            self._write_locked()
+            with self._file_lock():
+                self._states = {state.job_url: state for state in states if state.job_url}
+                self._loaded = True
+                self._write_locked()
 
     def _read_locked(self) -> dict[str, EvaluationState]:
         if not self.path.exists():
@@ -93,6 +123,6 @@ class AIStateStore:
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "states": {url: state.to_dict() for url, state in self._states.items()},
         }
-        tmp = self.path.with_suffix(".tmp")
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, self.path)
