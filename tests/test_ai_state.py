@@ -37,6 +37,16 @@ def test_state_transition_and_attempt_accounting() -> None:
     assert state.provider_attempts == 1
 
 
+def test_queued_failure_compounds_to_retryable_attempt() -> None:
+    state = EvaluationState("https://example.com/job")
+    state.transition(RETRYABLE_ERROR, error="worker crashed")
+    assert state.status == RETRYABLE_ERROR
+    assert state.attempts == 1
+    assert state.run_id
+    assert state.evaluation_started_at
+    assert state.lease_expires_at
+
+
 def test_deadline_state_is_resumable() -> None:
     state = EvaluationState("https://example.com/job", status=DEADLINE_EXCEEDED)
     assert state.status == DEADLINE_EXCEEDED
@@ -55,7 +65,7 @@ def test_permanent_error_is_reached_for_unrecoverable_failure() -> None:
     assert state.status == PERMANENT_ERROR
 
 
-def test_terminal_state_clears_retry_metadata() -> None:
+def test_terminal_state_clears_retry_metadata_but_preserves_permanent_reason() -> None:
     state = EvaluationState(
         "https://example.com/job",
         status=RETRYABLE_ERROR,
@@ -65,6 +75,21 @@ def test_terminal_state_clears_retry_metadata() -> None:
     state.transition(EVALUATING)
     state.transition(PERMANENT_ERROR, error="unsupported configuration")
     assert state.status == PERMANENT_ERROR
+    assert state.last_error == "unsupported configuration"
+    assert state.next_retry_at is None
+    assert state.lease_expires_at is None
+
+
+def test_successful_terminal_state_clears_retry_metadata() -> None:
+    state = EvaluationState(
+        "https://example.com/job",
+        status=RETRYABLE_ERROR,
+        last_error="timeout",
+        next_retry_at="2099-01-01T00:00:00+00:00",
+    )
+    state.transition(EVALUATING)
+    state.transition(EVALUATED)
+    state.transition(PASSED)
     assert state.last_error is None
     assert state.next_retry_at is None
 
