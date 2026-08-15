@@ -86,11 +86,44 @@ class MetricsCoordinator:
         with self._lock:
             return self.metrics.snapshot() if self.metrics_enabled else {}
 
+    @staticmethod
+    def _legacy_evaluated_jobs(progress_path: Path) -> dict[str, Any]:
+        """Build the legacy evaluated_jobs export from authoritative ai-state.json."""
+        state_path = progress_path.with_name("ai-state.json")
+        if not state_path.exists():
+            return {}
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return {}
+        raw_states = payload.get("states", {}) if isinstance(payload, dict) else {}
+        if not isinstance(raw_states, dict):
+            return {}
+
+        evaluated: dict[str, Any] = {}
+        terminal_states = {"EVALUATED", "PASSED", "REJECTED"}
+        for url, state in raw_states.items():
+            if not isinstance(state, dict) or state.get("status") not in terminal_states:
+                continue
+            verdict = state.get("verdict")
+            record: dict[str, Any] = {
+                "job_url": url,
+                "evaluation_key": state.get("evaluation_key"),
+                "attempts": state.get("attempts", 0),
+                "provider": state.get("provider"),
+                "last_attempt_at": state.get("last_attempt_at"),
+                "updated_at": state.get("updated_at"),
+            }
+            if isinstance(verdict, dict):
+                record.update(verdict)
+            evaluated[url] = record
+        return evaluated
+
     def save_progress(self, progress: dict[str, Any]) -> None:
-        """Atomically write progress from the coordinator thread only."""
+        """Atomically write progress and a compatibility export derived from ai-state.json."""
         self.progress_path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            progress.setdefault("evaluated_jobs", {})
+            progress["evaluated_jobs"] = self._legacy_evaluated_jobs(self.progress_path)
             progress["metrics"] = self.metrics.snapshot() if self.metrics_enabled else {}
             progress["updated_at"] = datetime.now(timezone.utc).isoformat()
             tmp_path = self.progress_path.with_suffix(".tmp")
