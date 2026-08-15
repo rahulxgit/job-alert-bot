@@ -43,17 +43,3 @@ def checkpoint_identity(candidate_urls: Iterable[str], profile_digest: str) -> d
 def compatible(payload: dict, candidate_urls: Iterable[str], profile_digest: str) -> bool:
     expected = checkpoint_identity(candidate_urls, profile_digest)
     return all(payload.get(key) == value for key, value in expected.items())
-
-
-def compatible_legacy(payload: dict, candidate_urls: Iterable[str], profile_digest: str) -> bool:
-    """Validate an existing Phase 7/previous-run checkpoint without trusting it as authoritative."""
-    if not isinstance(payload, dict) or payload.get("version") != LEGACY_CHECKPOINT_VERSION:
-        return False
-    legacy_keys = {
-        "checkpoint_version": LEGACY_CHECKPOINT_VERSION,
-        "candidate_set_hash": candidate_set_hash(candidate_urls),
-        "profile_hash": profile_digest,
-        "prompt_version": PROMPT_VERSION,
-        "evaluator_version": EVALUATOR_VERSION,
-    }
-    return all(payload.get(key) == value for key, value in legacy_keys.items())
