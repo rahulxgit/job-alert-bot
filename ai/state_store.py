@@ -1,13 +1,9 @@
-"""Durable, atomic persistence for unified AI evaluation state.
-
-Legacy checkpoints/queues can be imported through the migration helper and
-then represented by one state map. The store is intentionally format-light so
-GitHub Actions artifacts remain the persistence transport.
-"""
+"""Durable, atomic persistence for unified AI evaluation state."""
 from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Iterable
@@ -88,7 +84,7 @@ class AIStateStore:
         payload = {
             "version": STATE_META_VERSION,
             "state_version": STATE_VERSION,
-            "updated_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "states": {url: state.to_dict() for url, state in self._states.items()},
         }
         tmp = self.path.with_suffix(".tmp")
