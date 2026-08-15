@@ -16,7 +16,13 @@ STATE_META_VERSION = 1
 
 
 class AIStateStore:
-    def __init__(self, path: Path = STATE_PATH) -> None:
+    def __init__(self, path: Path | None = None) -> None:
+        if path is None:
+            try:
+                from ai import evaluator
+                path = evaluator.AI_PROGRESS_PATH.with_name("ai-state.json")
+            except (ImportError, AttributeError):
+                path = STATE_PATH
         self.path = path
         self._lock = Lock()
         self._states: dict[str, EvaluationState] = {}

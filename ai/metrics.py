@@ -90,6 +90,7 @@ class MetricsCoordinator:
         """Atomically write progress from the coordinator thread only."""
         self.progress_path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
+            progress.setdefault("evaluated_jobs", {})
             progress["metrics"] = self.metrics.snapshot() if self.metrics_enabled else {}
             progress["updated_at"] = datetime.now(timezone.utc).isoformat()
             tmp_path = self.progress_path.with_suffix(".tmp")
