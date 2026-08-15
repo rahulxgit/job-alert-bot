@@ -5,6 +5,7 @@ import pytest
 from ai.provider_state import record_request, reset_thread_context
 from ai.state import (
     DEADLINE_EXCEEDED,
+    EVALUATED,
     EVALUATING,
     PASSED,
     REJECTED,
