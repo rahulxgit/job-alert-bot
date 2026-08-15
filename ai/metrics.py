@@ -41,7 +41,13 @@ class AIMetrics:
 
 
 class MetricsCoordinator:
-    """Owns all mutable AI metrics and serializes checkpoint writes."""
+    """Owns all mutable AI metrics and serializes checkpoint writes.
+
+    ``ai-state.json`` remains the authoritative logical state store. The
+    ``ai-progress.json`` file is a compatibility/checkpoint view, so its
+    ``evaluated_jobs`` projection is rebuilt from the authoritative store on
+    every save rather than becoming a second source of truth.
+    """
 
     def __init__(self, progress_path: Path, metrics_enabled: bool = True) -> None:
         self.progress_path = progress_path
@@ -86,11 +92,39 @@ class MetricsCoordinator:
         with self._lock:
             return self.metrics.snapshot() if self.metrics_enabled else {}
 
+    def _project_evaluated_jobs(self) -> dict[str, dict[str, Any]]:
+        state_path = self.progress_path.with_name("ai-state.json")
+        if not state_path.exists():
+            return {}
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return {}
+        raw_states = payload.get("states", {}) if isinstance(payload, dict) else {}
+        if not isinstance(raw_states, dict):
+            return {}
+
+        terminal = {"EVALUATED", "PASSED", "REJECTED"}
+        projected: dict[str, dict[str, Any]] = {}
+        for url, raw_state in raw_states.items():
+            if not isinstance(raw_state, dict) or raw_state.get("status") not in terminal:
+                continue
+            verdict = raw_state.get("verdict")
+            if not isinstance(verdict, dict):
+                continue
+            projected[str(url)] = {
+                "job_url": str(url),
+                **verdict,
+                "evaluation_key": raw_state.get("evaluation_key"),
+                "state_status": raw_state.get("status"),
+            }
+        return projected
+
     def save_progress(self, progress: dict[str, Any]) -> None:
         """Atomically write progress from the coordinator thread only."""
         self.progress_path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            progress.setdefault("evaluated_jobs", {})
+            progress["evaluated_jobs"] = self._project_evaluated_jobs()
             progress["metrics"] = self.metrics.snapshot() if self.metrics_enabled else {}
             progress["updated_at"] = datetime.now(timezone.utc).isoformat()
             tmp_path = self.progress_path.with_suffix(".tmp")
