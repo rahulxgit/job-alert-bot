@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import Iterable
 
 
-CHECKPOINT_VERSION = 2
+CHECKPOINT_VERSION = 3
 PROMPT_VERSION = "phase-7"
 EVALUATOR_VERSION = "phase-7"
+STATE_FORMAT_VERSION = 1
+LEGACY_CHECKPOINT_VERSION = 2
 
 
 def stable_hash(parts: Iterable[str]) -> str:
@@ -35,6 +36,7 @@ def checkpoint_identity(candidate_urls: Iterable[str], profile_digest: str) -> d
         "profile_hash": profile_digest,
         "prompt_version": PROMPT_VERSION,
         "evaluator_version": EVALUATOR_VERSION,
+        "state_format_version": STATE_FORMAT_VERSION,
     }
 
 
