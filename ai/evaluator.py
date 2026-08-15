@@ -17,6 +17,9 @@ from ai.profile import build_candidate_profile
 from ai.metrics import MetricsCoordinator
 from ai.checkpoint import CHECKPOINT_VERSION, compatible, evaluation_key, profile_hash, checkpoint_identity
 from ai.provider_limiter import ProviderBackoff
+from ai.state import EvaluationState, QUEUED, EVALUATING, EVALUATED, PASSED, REJECTED, RETRYABLE_ERROR, PERMANENT_ERROR, DEADLINE_EXCEEDED
+from ai.state_store import AIStateStore
+from ai.state_migration import migrate_legacy_progress, migrate_legacy_retry_jobs
 from utils.logging_setup import get_logger
 
 log = get_logger("evaluator")
@@ -319,7 +322,7 @@ def _load_ai_progress() -> dict:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or payload.get("version") != AI_PROGRESS_VERSION:
+        if not isinstance(payload, dict) or payload.get("version") not in {2, 3}:
             return {}
         if payload.get("status") == "completed":
             return {}
@@ -448,67 +451,103 @@ def evaluate_listing(
     return None, True
 
 
-def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
-    """Review selected jobs concurrently with a hard evaluation budget.
+def _legacy_state_store():
+    """Build the unified store and import legacy files only when necessary."""
+    store = AIStateStore()
+    if store.load():
+        return store
 
-    Completed candidates are checkpointed as before. If the deadline expires,
-    in-flight/unstarted candidates are persisted to the retry queue and the
-    checkpoint remains resumable instead of being marked fully completed.
-    """
+    progress = _load_ai_progress()
+    retry_payload: dict = {}
+    if FAILED_AI_JOBS_PATH.exists():
+        try:
+            raw = json.loads(FAILED_AI_JOBS_PATH.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                retry_payload = raw
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            retry_payload = {}
+
+    migrated = migrate_legacy_progress(progress) + migrate_legacy_retry_jobs(
+        retry_payload.get("jobs", []) if isinstance(retry_payload, dict) else []
+    )
+    if migrated:
+        deduped: dict[str, EvaluationState] = {}
+        for state in migrated:
+            existing = deduped.get(state.job_url)
+            if existing is None or state.status in {RETRYABLE_ERROR, DEADLINE_EXCEEDED}:
+                deduped[state.job_url] = state
+        store.replace_all(deduped.values())
+    return store
+
+
+def review_candidates(listings: list[JobListing], deadline: float | None = None) -> list[JobListing]:
+    """Review jobs with one authoritative per-job state machine."""
     if deadline is None:
         budget_seconds = max(1, int(getattr(config, "LLM_EVALUATION_BUDGET_SECONDS", 2700)))
         deadline = time.monotonic() + budget_seconds
 
-    retry_jobs = _load_failed_ai_jobs()
-    retry_urls = {job.job_url for job in retry_jobs}
+    store = _legacy_state_store()
+    states = store.load()
+    retry_jobs = []
+    retry_urls = set()
+    for job in listings:
+        state = states.get(job.job_url)
+        if state and state.status in {RETRYABLE_ERROR, DEADLINE_EXCEEDED, EVALUATING, QUEUED}:
+            retry_jobs.append(job)
+            retry_urls.add(job.job_url)
+
     progress = _load_ai_progress()
-    current_candidates = [job for job in listings if job.job_url and job.job_url not in retry_urls]
-    new_candidate_urls = [job.job_url for job in current_candidates[:config.MAX_LLM_CANDIDATES]]
     profile_text = _profile()
     profile_digest = profile_hash(profile_text)
-    progress_identity = checkpoint_identity(new_candidate_urls, profile_digest)
+    candidate_urls = [job.job_url for job in listings if job.job_url]
+    progress_identity = checkpoint_identity(candidate_urls[:config.MAX_LLM_CANDIDATES], profile_digest)
 
-    if progress and not compatible(progress, new_candidate_urls, profile_digest):
-        log.warning("Ignoring incompatible AI checkpoint; candidate/profile context changed")
+    if progress and not compatible(progress, candidate_urls[:config.MAX_LLM_CANDIDATES], profile_digest):
+        log.warning("Ignoring incompatible legacy AI checkpoint; unified state is authoritative")
         progress = {}
 
-    evaluated_data = progress.get("evaluated_jobs", {}) if isinstance(progress.get("evaluated_jobs", {}), dict) else {}
-    current_by_url = {job.job_url: job for job in listings if job.job_url}
     resumed_jobs = []
-    for url, data in evaluated_data.items():
-        job = _job_from_dict(data)
-        if job and url in current_by_url:
-            expected_key = evaluation_key(url, current_by_url[url].description, profile_digest)
-            if isinstance(data, dict) and data.get("evaluation_key") == expected_key:
-                resumed_jobs.append(current_by_url[url])
+    for job in listings:
+        state = states.get(job.job_url)
+        expected_key = evaluation_key(job.job_url, job.description, profile_digest)
+        if state and state.status in {PASSED, REJECTED, EVALUATED} and state.evaluation_key == expected_key and state.verdict:
+            verdict = FitVerdict(**{k: v for k, v in state.verdict.items() if k in {"fit_score", "is_fresher_appropriate", "reason", "hit_rate_limit", "role_match", "experience_match", "technical_match", "project_match", "education_match", "location_match", "company_quality", "decision", "why", "gaps"}})
+            _apply_verdict(job, verdict)
+            resumed_jobs.append(job)
 
     resumed_urls = {job.job_url for job in resumed_jobs}
-    current_jobs = [job for job in current_candidates if job.job_url not in resumed_urls]
-    new_jobs = current_jobs[:config.MAX_LLM_CANDIDATES]
-    ordered_jobs = retry_jobs + new_jobs
+    new_jobs = [job for job in listings if job.job_url and job.job_url not in resumed_urls and job.job_url not in retry_urls]
+    ordered_jobs = retry_jobs + new_jobs[:config.MAX_LLM_CANDIDATES]
 
     passed = [job for job in resumed_jobs if job.fit_score >= config.LLM_FIT_THRESHOLD and job.fresher_appropriate]
-    failed = list(retry_jobs)
-    failed_urls = {job.job_url for job in failed}
-    progress = progress if progress else {"version": AI_PROGRESS_VERSION, "status": "in_progress", "candidate_urls": [], "evaluated_jobs": {}, "started_at": datetime.now(timezone.utc).isoformat()}
-    progress.update(progress_identity)
-    progress["status"] = "in_progress"
-    progress["candidate_urls"] = [job.job_url for job in ordered_jobs]
-    progress["evaluated_jobs"] = {**evaluated_data, **{job.job_url: {**job.to_dict(), "evaluation_key": evaluation_key(job.job_url, job.description, profile_digest)} for job in resumed_jobs}}
-    progress["evaluated_count"] = len(progress["evaluated_jobs"])
-    progress["total_candidates"] = len(ordered_jobs) + len(resumed_jobs)
-    progress["deadline_seconds"] = max(0, int(deadline - time.monotonic()))
-
     coordinator = MetricsCoordinator(AI_PROGRESS_PATH, metrics_enabled=getattr(config, "AI_METRICS_ENABLED", True))
-    coordinator.save_progress(progress)
-    log.info("AI evaluation queue: %s retry jobs + %s new candidates + %s resumed completed jobs; concurrency=%s; budget=%ss", len(retry_jobs), len(new_jobs), len(resumed_jobs), config.AI_MAX_CONCURRENCY, max(0, int(deadline - time.monotonic())))
+    coordinator.save_progress({
+        **(progress or {}),
+        **progress_identity,
+        "version": AI_PROGRESS_VERSION,
+        "status": "in_progress",
+        "candidate_urls": [job.job_url for job in ordered_jobs],
+        "evaluated_count": len(resumed_jobs),
+        "total_candidates": len(ordered_jobs) + len(resumed_jobs),
+    })
 
     def worker(listing: JobListing) -> tuple[JobListing, FitVerdict | None, bool, float]:
+        state = states.get(listing.job_url) or EvaluationState(job_url=listing.job_url)
+        state.start_attempt()
+        state.evaluation_key = evaluation_key(listing.job_url, listing.description, profile_digest)
+        store.upsert(state)
         started = time.monotonic()
         coordinator.record_candidate_start()
         if _deadline_reached(deadline):
+            state.transition(DEADLINE_EXCEEDED, error="ai_deadline_exceeded", evaluation_key=state.evaluation_key)
+            store.upsert(state)
             return listing, None, True, time.monotonic() - started
         verdict, unresolved = evaluate_listing(listing, deadline=deadline)
+        if unresolved:
+            state.transition(RETRYABLE_ERROR if not _deadline_reached(deadline) else DEADLINE_EXCEEDED, error="provider_or_deadline_failure", evaluation_key=state.evaluation_key)
+        else:
+            state.transition(EVALUATED, evaluation_key=state.evaluation_key, verdict=verdict.__dict__ if verdict else None)
+        store.upsert(state)
         return listing, verdict, unresolved, time.monotonic() - started
 
     with ThreadPoolExecutor(max_workers=config.AI_MAX_CONCURRENCY, thread_name_prefix="ai-review") as executor:
@@ -519,35 +558,32 @@ def review_candidates(listings: list[JobListing], deadline: float | None = None)
                 listing, verdict, unresolved, duration = future.result()
             except Exception as exc:
                 log.exception("AI worker crashed for '%s': %s", listing.title, exc)
+                state = states.get(listing.job_url) or EvaluationState(job_url=listing.job_url)
+                state.transition(RETRYABLE_ERROR, error=str(exc), evaluation_key=evaluation_key(listing.job_url, listing.description, profile_digest))
+                store.upsert(state)
                 verdict, unresolved, duration = None, True, 0.0
 
             if unresolved or verdict is None:
                 coordinator.record_candidate_result(status="UNRESOLVED", duration_seconds=duration)
-                if listing.job_url not in failed_urls:
-                    failed.append(listing)
-                    failed_urls.add(listing.job_url)
-                progress["failed_urls"] = sorted(failed_urls)
             else:
-                failed = [job for job in failed if job.job_url != listing.job_url]
-                failed_urls.discard(listing.job_url)
                 passed_flag = _apply_verdict(listing, verdict)
+                final_state = store.get(listing.job_url) or EvaluationState(job_url=listing.job_url)
+                final_state.transition(PASSED if passed_flag else REJECTED, evaluation_key=evaluation_key(listing.job_url, listing.description, profile_digest), verdict=verdict.__dict__)
+                store.upsert(final_state)
                 coordinator.record_candidate_result(status="PASSED" if passed_flag else "REJECTED", duration_seconds=duration)
                 if passed_flag:
                     passed.append(listing)
-                progress["evaluated_jobs"][listing.job_url] = {**listing.to_dict(), "evaluation_key": evaluation_key(listing.job_url, listing.description, profile_digest)}
-                progress["evaluated_count"] = len(progress["evaluated_jobs"])
-                progress["failed_urls"] = sorted(failed_urls)
 
-            _save_failed_ai_jobs(failed)
-            coordinator.save_progress(progress)
-
-    deadline_reached = _deadline_reached(deadline) and len(progress["evaluated_jobs"]) < len(ordered_jobs) + len(resumed_jobs)
-    progress["status"] = "deadline_exceeded" if deadline_reached else "completed"
-    progress["completed_at"] = datetime.now(timezone.utc).isoformat()
-    if deadline_reached:
-        progress["deadline_exceeded_at"] = progress["completed_at"]
-    progress["metrics"] = coordinator.snapshot()
-    _save_failed_ai_jobs(failed)
+    deadline_reached = _deadline_reached(deadline)
+    progress = {
+        **progress_identity,
+        "version": AI_PROGRESS_VERSION,
+        "status": "deadline_exceeded" if deadline_reached else "completed",
+        "evaluated_count": sum(1 for state in store.load().values() if state.status in {EVALUATED, PASSED, REJECTED}),
+        "total_candidates": len(ordered_jobs) + len(resumed_jobs),
+        "state_store": "run-artifacts/ai-state.json",
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
     coordinator.save_progress(progress)
     try:
         Path("run-artifacts").mkdir(parents=True, exist_ok=True)
@@ -556,5 +592,15 @@ def review_candidates(listings: list[JobListing], deadline: float | None = None)
         Path("run-artifacts/ai-evaluation-summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError as exc:
         log.warning("Could not write AI metrics artifact: %s", exc)
+
+    # Legacy retry artifact is retained as a compatibility/export view only;
+    # correctness comes from ai-state.json.
+    retry_export = []
+    for state in store.load().values():
+        if state.status in {RETRYABLE_ERROR, DEADLINE_EXCEEDED, EVALUATING, QUEUED}:
+            job = next((item for item in listings if item.job_url == state.job_url), None)
+            if job:
+                retry_export.append(job)
+    _save_failed_ai_jobs(retry_export)
     passed.sort(key=lambda l: l.fit_score, reverse=True)
     return passed
