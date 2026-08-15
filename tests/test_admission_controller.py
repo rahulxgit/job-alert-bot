@@ -1,4 +1,12 @@
-from ai.admission_controller import compute_admission_limit
+from ai.admission_controller import admit_candidates, compute_admission_limit
+
+
+class _Job:
+    def __init__(self, url: str) -> None:
+        self.job_url = url
+
+    def to_dict(self) -> dict:
+        return {"job_url": self.job_url}
 
 
 def test_admission_limit_is_bounded_by_configured_max() -> None:
@@ -39,3 +47,13 @@ def test_admission_uses_minimum_floor_on_bad_history(monkeypatch) -> None:
         "p95_latency_seconds": 2000,
     })
     assert decision["admitted_candidates"] == 40
+
+
+def test_admission_explicitly_records_deferred_candidates(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("ai.admission_controller.DEFERRED_ARTIFACT", tmp_path / "deferred.json")
+    jobs = [_Job(f"https://example.com/{i}") for i in range(5)]
+    admitted, deferred = admit_candidates(jobs, limit=3)
+    assert len(admitted) == 3
+    assert len(deferred) == 2
+    assert deferred[0].job_url.endswith("/3")
+    assert (tmp_path / "deferred.json").exists()
