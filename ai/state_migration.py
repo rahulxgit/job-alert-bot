@@ -8,11 +8,12 @@ from ai.state import (
     PASSED,
     REJECTED,
     RETRYABLE_ERROR,
-    DEADLINE_EXCEEDED,
     EVALUATED,
     PERMANENT_ERROR,
     _safe_int,
 )
+
+_TERMINAL_MIGRATED_URLS: set[str] = set()
 
 
 def _verdict_to_status(row: dict[str, Any]) -> str:
@@ -31,6 +32,7 @@ def _verdict_to_status(row: dict[str, Any]) -> str:
 
 def migrate_legacy_progress(payload: dict[str, Any] | None) -> list[EvaluationState]:
     """Convert completed checkpoint entries into unified evaluation states."""
+    _TERMINAL_MIGRATED_URLS.clear()
     if not isinstance(payload, dict):
         return []
     rows = payload.get("evaluated_jobs", {})
@@ -40,27 +42,28 @@ def migrate_legacy_progress(payload: dict[str, Any] | None) -> list[EvaluationSt
     for url, row in rows.items():
         if not isinstance(row, dict) or not str(url).strip():
             continue
-        states.append(
-            EvaluationState(
-                job_url=str(url),
-                status=_verdict_to_status(row),
-                attempts=max(1, _safe_int(row.get("attempts"), 1)),
-                provider=row.get("provider"),
-                provider_attempts=_safe_int(row.get("provider_attempts"), 0),
-                last_error=row.get("last_error"),
-                last_attempt_at=row.get("last_attempt_at"),
-                evaluation_key=row.get("evaluation_key"),
-                updated_at=row.get("updated_at") or payload.get("updated_at") or "",
-                verdict={
-                    key: value
-                    for key, value in row.items()
-                    if key not in {
-                        "job_url", "evaluation_key", "attempts", "provider",
-                        "provider_attempts", "last_error", "last_attempt_at", "updated_at",
-                    }
-                },
-            )
+        state = EvaluationState(
+            job_url=str(url),
+            status=_verdict_to_status(row),
+            attempts=max(1, _safe_int(row.get("attempts"), 1)),
+            provider=row.get("provider"),
+            provider_attempts=_safe_int(row.get("provider_attempts"), 0),
+            last_error=row.get("last_error"),
+            last_attempt_at=row.get("last_attempt_at"),
+            evaluation_key=row.get("evaluation_key"),
+            updated_at=row.get("updated_at") or payload.get("updated_at") or "",
+            verdict={
+                key: value
+                for key, value in row.items()
+                if key not in {
+                    "job_url", "evaluation_key", "attempts", "provider",
+                    "provider_attempts", "last_error", "last_attempt_at", "updated_at",
+                }
+            },
         )
+        states.append(state)
+        if state.status in {PASSED, REJECTED, PERMANENT_ERROR}:
+            _TERMINAL_MIGRATED_URLS.add(state.job_url)
     return states
 
 
@@ -73,7 +76,7 @@ def migrate_legacy_retry_jobs(jobs: list[dict[str, Any]] | None) -> list[Evaluat
         if not isinstance(job, dict):
             continue
         url = str(job.get("job_url") or "").strip()
-        if not url:
+        if not url or url in _TERMINAL_MIGRATED_URLS:
             continue
         states.append(
             EvaluationState(
@@ -96,7 +99,6 @@ MIGRATION_PRECEDENCE = {
     REJECTED: 100,
     PERMANENT_ERROR: 95,
     EVALUATED: 90,
-    DEADLINE_EXCEEDED: 50,
     RETRYABLE_ERROR: 40,
 }
 
@@ -111,10 +113,8 @@ def resolve_migration_conflicts(states: list[EvaluationState]) -> list[Evaluatio
             continue
         current_rank = MIGRATION_PRECEDENCE.get(current.status, 0)
         candidate_rank = MIGRATION_PRECEDENCE.get(state.status, 0)
-        if candidate_rank > current_rank:
+        if candidate_rank > current_rank or (
+            candidate_rank == current_rank and (state.updated_at or "") > (current.updated_at or "")
+        ):
             by_url[state.job_url] = state
-        elif candidate_rank == current_rank:
-            # Prefer the newer record when legacy timestamps are available.
-            if (state.updated_at or "") > (current.updated_at or ""):
-                by_url[state.job_url] = state
     return list(by_url.values())
