@@ -41,12 +41,26 @@ jobs:
           if old not in s:
               raise SystemExit('state-store path anchor not found')
           s = s.replace(old, new, 1)
+
+          old = '''    progress = _load_ai_progress()\n    profile_text = _profile()'''
+          new = '''    progress = _load_ai_progress()\n    legacy_run_completed = False\n    if AI_PROGRESS_PATH.exists():\n        try:\n            raw_progress = json.loads(AI_PROGRESS_PATH.read_text(encoding="utf-8"))\n            legacy_run_completed = isinstance(raw_progress, dict) and raw_progress.get("status") == "completed"\n        except (OSError, json.JSONDecodeError, TypeError, ValueError):\n            legacy_run_completed = False\n    profile_text = _profile()'''
+          if old not in s:
+              raise SystemExit('completed-run compatibility anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = '''        if state and state.status in {PASSED, REJECTED, EVALUATED} and state.evaluation_key == expected_key and state.verdict:'''
+          new = '''        if not legacy_run_completed and state and state.status in {PASSED, REJECTED, EVALUATED} and state.evaluation_key == expected_key and state.verdict:'''
+          if old not in s:
+              raise SystemExit('terminal resume condition anchor not found')
+          s = s.replace(old, new, 1)
+
           old = '''    deadline_reached = _deadline_reached(deadline)\n    progress = {\n        **progress_identity,\n        "version": AI_PROGRESS_VERSION,\n        "status": "deadline_exceeded" if deadline_reached else "completed",\n        "evaluated_count": sum(1 for state in store.load().values() if state.status in {EVALUATED, PASSED, REJECTED}),\n        "total_candidates": len(ordered_jobs) + len(resumed_jobs),\n        "state_store": "run-artifacts/ai-state.json",\n        "completed_at": datetime.now(timezone.utc).isoformat(),\n    }'''
           new = '''    deadline_reached = _deadline_reached(deadline)\n    state_snapshot = store.load()\n    current_by_url = {job.job_url: job for job in listings if job.job_url}\n    evaluated_jobs = {}\n    for url, state in state_snapshot.items():\n        if state.status not in {EVALUATED, PASSED, REJECTED} or not state.verdict:\n            continue\n        job = current_by_url.get(url)\n        if job is None:\n            continue\n        evaluated_jobs[url] = {\n            **job.to_dict(),\n            **state.verdict,\n            "evaluation_key": state.evaluation_key,\n            "state_status": state.status,\n        }\n    progress = {\n        **progress_identity,\n        "version": AI_PROGRESS_VERSION,\n        "status": "deadline_exceeded" if deadline_reached else "completed",\n        "evaluated_jobs": evaluated_jobs,\n        "evaluated_count": len(evaluated_jobs),\n        "total_candidates": len(ordered_jobs) + len(resumed_jobs),\n        "state_store": str(store.path),\n        "completed_at": datetime.now(timezone.utc).isoformat(),\n    }'''
           if old not in s:
               raise SystemExit('legacy-progress projection anchor not found')
           s = s.replace(old, new, 1)
           p.write_text(s, encoding='utf-8')
+
           workflow = Path('.github/workflows/job-alerts.yml')
           w = workflow.read_text(encoding='utf-8')
           old_w = '''          path: run-artifacts/ai-progress.json\n          if-no-files-found: ignore'''
