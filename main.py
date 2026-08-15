@@ -8,6 +8,7 @@ Pipeline: fetch from independent sources -> dedupe -> keyword pre-filter ->
 fill missing/short job descriptions with a bounded Crawl4AI batch -> AI review
 -> recruiter-email enrichment -> sort -> Sheet/email.
 """
+import os
 import pandas as pd
 
 import config
@@ -31,6 +32,7 @@ from sources.generic_crawler import crawl_url
 from sources.crawl4ai import crawl_urls as crawl4ai_urls
 from sources.crawl4ai_discovery import Crawl4AIDiscoverySource
 from ai.evaluator import prefilter, review_candidates
+from ai.admission_controller import admit_candidates
 from enrichment.recruiter_email import enrich_with_emails
 from sheets.google_sheets import get_sheet, get_seen_urls, log_new_jobs
 from mailer.gmail_client import get_gmail_service, send_email
@@ -274,10 +276,24 @@ def run_pipeline(dry_run: bool = False):
             log.info("Dry run: email not sent.")
         return
 
-    reviewed = review_candidates(unseen)
+    admitted, deferred = admit_candidates(unseen)
+    log.info(
+        "AI admission control: %s admitted / %s unseen; %s deferred",
+        len(admitted),
+        len(unseen),
+        len(deferred),
+    )
+    _export(
+        "ai-admitted-listings",
+        admitted,
+        admission_limit=os.environ.get("AI_ADMISSION_LIMIT", "unset"),
+        deferred_count=len(deferred),
+    )
+
+    reviewed = review_candidates(admitted)
     log.info(f"{len(reviewed)} passed AI fit review (score >= {config.LLM_FIT_THRESHOLD})")
     log.info(f"  by source: {_source_breakdown(reviewed)}")
-    _export("ai-reviewed", reviewed, threshold=config.LLM_FIT_THRESHOLD)
+    _export("ai-reviewed", reviewed, threshold=config.LLM_FIT_THRESHOLD, admitted_count=len(admitted), deferred_count=len(deferred))
 
     reviewed_urls = {l.job_url for l in reviewed}
     if len(reviewed_urls) != len(reviewed):
@@ -296,7 +312,7 @@ def run_pipeline(dry_run: bool = False):
     log.info(f"  found an email for {found_count}/{len(reviewed)} jobs")
 
     reviewed.sort(key=lambda l: (bool(l.recruiter_email), l.fit_score), reverse=True)
-    _export("final-reviewed", reviewed, recruiter_email_count=found_count)
+    _export("final-reviewed", reviewed, recruiter_email_count=found_count, admitted_count=len(admitted), deferred_count=len(deferred))
 
     _export_search_summary(source_health=source_health, raw_count=raw_count, unique_count=len(all_listings), source_breakdown=_source_breakdown(all_listings), duration_seconds=time.monotonic() - search_started, status="ready_for_persistence")
     export_summary({
@@ -304,6 +320,8 @@ def run_pipeline(dry_run: bool = False):
         "source_counts": source_counts,
         "shortlist_count": len(shortlist),
         "unseen_count": len(unseen),
+        "ai_admitted_count": len(admitted),
+        "ai_deferred_count": len(deferred),
         "ai_reviewed_count": len(reviewed),
         "recruiter_email_count": found_count,
     })

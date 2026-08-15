@@ -12,6 +12,7 @@ import requests
 import config
 from models import FitVerdict
 from ai.base import AIProvider
+from ai.provider_state import record_failure, record_request, record_success
 from utils.llm_json import as_bool, as_int, as_str_list, parse_json_object
 from utils.logging_setup import get_logger
 
@@ -31,6 +32,8 @@ class GatewayProvider(AIProvider):
         retries = config.AI_GATEWAY_MAX_RETRIES if max_retries is None else max(0, max_retries)
 
         for attempt in range(retries + 1):
+            started = time.monotonic()
+            record_request(self.name)
             try:
                 resp = requests.post(
                     f"{config.AI_GATEWAY_URL}/chat",
@@ -42,12 +45,16 @@ class GatewayProvider(AIProvider):
                     timeout=config.AI_GATEWAY_TIMEOUT_SECONDS,
                 )
 
-                # ``Mock`` objects used by unit tests (and lightweight test
-                # doubles) may not provide ``status_code``. Only classify HTTP
-                # status ranges when an actual integer status is available;
-                # otherwise let raise_for_status()/JSON parsing decide.
                 status_code = getattr(resp, "status_code", None)
+                if isinstance(status_code, int) and status_code == 429:
+                    latency = time.monotonic() - started
+                    record_failure(self.name, "RATE_LIMITED", latency)
+                    log.warning("gateway rate limited; falling back to Gemini")
+                    return None
+
                 if isinstance(status_code, int) and 400 <= status_code < 500:
+                    latency = time.monotonic() - started
+                    record_failure(self.name, f"HTTP_{status_code}", latency)
                     log.warning(
                         "gateway rejected request with HTTP %s; falling back to Gemini",
                         status_code,
@@ -71,7 +78,7 @@ class GatewayProvider(AIProvider):
                 why = as_str_list(parsed.get("why"))
                 gaps = as_str_list(parsed.get("gaps"))
                 reason = str(parsed.get("reason") or "").strip() or "; ".join(why)
-                return FitVerdict(
+                verdict = FitVerdict(
                     fit_score=as_int(parsed.get("fit_score")),
                     is_fresher_appropriate=as_bool(parsed.get("is_fresher_appropriate")),
                     reason=reason,
@@ -86,7 +93,31 @@ class GatewayProvider(AIProvider):
                     why=why,
                     gaps=gaps,
                 )
+                record_success(self.name, time.monotonic() - started)
+                return verdict
+            except requests.Timeout as exc:
+                latency = time.monotonic() - started
+                record_failure(self.name, "TIMEOUT", latency)
+                if attempt < retries:
+                    log.warning(
+                        "gateway timeout (attempt %s/%s): %s — retrying in %.1fs",
+                        attempt + 1,
+                        retries + 1,
+                        exc,
+                        config.AI_GATEWAY_RETRY_DELAY_SECONDS,
+                    )
+                    time.sleep(config.AI_GATEWAY_RETRY_DELAY_SECONDS)
+                    continue
+                log.warning(
+                    "gateway unavailable after %s attempts: %s — falling back to Gemini",
+                    retries + 1,
+                    exc,
+                )
+                return None
             except requests.RequestException as exc:
+                latency = time.monotonic() - started
+                status = "HTTP_5XX" if "5" in str(getattr(getattr(exc, "response", None), "status_code", "")) else "NETWORK_ERROR"
+                record_failure(self.name, status, latency)
                 if attempt < retries:
                     log.warning(
                         "gateway transient failure (attempt %s/%s): %s — retrying in %.1fs",
@@ -104,6 +135,7 @@ class GatewayProvider(AIProvider):
                 )
                 return None
             except (ValueError, TypeError, KeyError) as exc:
+                record_failure(self.name, "INVALID_RESPONSE", time.monotonic() - started)
                 log.warning("gateway response invalid: %s — falling back to Gemini", exc)
                 return None
 
