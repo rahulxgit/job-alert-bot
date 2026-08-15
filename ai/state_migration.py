@@ -3,17 +3,26 @@ from __future__ import annotations
 
 from typing import Any
 
-from ai.state import EvaluationState, QUEUED, RETRYABLE_ERROR, DEADLINE_EXCEEDED, PASSED, REJECTED
+from ai.state import EvaluationState, QUEUED, RETRYABLE_ERROR, DEADLINE_EXCEEDED, PASSED, REJECTED, EVALUATED
 
 
 def _verdict_to_status(row: dict[str, Any]) -> str:
     if row.get("fresher_appropriate") is False:
         return REJECTED
+    decision = str(row.get("decision") or "").strip().lower()
+    if decision == "reject":
+        return REJECTED
+    if decision in {"strong_match", "good_match", "weak_match"}:
+        try:
+            return PASSED if bool(row.get("fresher_appropriate")) else REJECTED
+        except (TypeError, ValueError):
+            return EVALUATED
     score = row.get("fit_score")
     try:
-        return PASSED if int(score) >= 0 and row.get("fresher_appropriate", True) else REJECTED
+        score_value = int(score)
     except (TypeError, ValueError):
-        return PASSED if row.get("fit_score") is not None else QUEUED
+        return EVALUATED
+    return PASSED if score_value >= 70 and row.get("fresher_appropriate") is True else REJECTED
 
 
 def migrate_legacy_progress(payload: dict[str, Any] | None) -> list[EvaluationState]:
@@ -36,7 +45,14 @@ def migrate_legacy_progress(payload: dict[str, Any] | None) -> list[EvaluationSt
             last_attempt_at=row.get("last_attempt_at"),
             evaluation_key=row.get("evaluation_key"),
             updated_at=row.get("updated_at") or payload.get("updated_at") or "",
-            verdict={key: value for key, value in row.items() if key not in {"job_url", "evaluation_key", "attempts", "provider", "last_error", "last_attempt_at", "updated_at"}},
+            verdict={
+                key: value
+                for key, value in row.items()
+                if key not in {
+                    "job_url", "evaluation_key", "attempts", "provider",
+                    "last_error", "last_attempt_at", "updated_at",
+                }
+            },
         )
         states.append(state)
     return states
