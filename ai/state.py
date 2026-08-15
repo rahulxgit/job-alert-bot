@@ -112,6 +112,25 @@ class EvaluationState:
         current = self.status
         target = PERMANENT_ERROR if status == RETRYABLE_ERROR and _is_permanent_error(error) else status
         allowed = ALLOWED_TRANSITIONS.get(current, set())
+
+        # A worker can fail after its state was created in QUEUED but before the
+        # outer coordinator observes the persisted EVALUATING record. Normalize
+        # this recovery edge through a real evaluation attempt before marking
+        # the job retryable. This is deliberately narrower than allowing
+        # arbitrary state jumps.
+        if current == QUEUED and target == RETRYABLE_ERROR:
+            self.attempts = max(1, self.attempts)
+            self.last_attempt_at = self.last_attempt_at or utc_now()
+            self.evaluation_started_at = self.evaluation_started_at or utc_now()
+            self.lease_expires_at = self.lease_expires_at or datetime.fromtimestamp(
+                datetime.now(timezone.utc).timestamp() + EVALUATION_LEASE_SECONDS,
+                tz=timezone.utc,
+            ).isoformat()
+            self.run_id = self.run_id or str(uuid.uuid4())
+            current = EVALUATING
+            self.status = EVALUATING
+            allowed = ALLOWED_TRANSITIONS[EVALUATING]
+
         if target != current and target not in allowed:
             raise ValueError(f"invalid AI state transition: {current} -> {target}")
 
@@ -135,7 +154,7 @@ class EvaluationState:
             if target in {PASSED, REJECTED, PERMANENT_ERROR}:
                 self.evaluation_started_at = None
 
-        if target == EVALUATING:
+        if target == EVALUATING and current != EVALUATING:
             self.evaluation_started_at = utc_now()
             self.lease_expires_at = datetime.fromtimestamp(
                 datetime.now(timezone.utc).timestamp() + EVALUATION_LEASE_SECONDS,
