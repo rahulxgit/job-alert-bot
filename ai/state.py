@@ -1,8 +1,8 @@
 """Unified, versioned AI evaluation state model.
 
-One logical record owns the lifecycle of each candidate. The model is designed
-to absorb the legacy retry queue and checkpoint representations without
-requiring an unsafe all-at-once migration.
+One logical record owns the lifecycle of each candidate. Legacy checkpoint and
+retry representations can be normalized into this model without changing the
+meaning of a completed evaluation or a retryable failure.
 """
 from __future__ import annotations
 
@@ -22,6 +22,10 @@ RETRYABLE_ERROR = "RETRYABLE_ERROR"
 PERMANENT_ERROR = "PERMANENT_ERROR"
 DEADLINE_EXCEEDED = "DEADLINE_EXCEEDED"
 
+ALL_STATES = {
+    QUEUED, EVALUATING, EVALUATED, PASSED, REJECTED,
+    RETRYABLE_ERROR, PERMANENT_ERROR, DEADLINE_EXCEEDED,
+}
 TERMINAL_STATES = {PASSED, REJECTED, PERMANENT_ERROR}
 RESUMABLE_STATES = {QUEUED, RETRYABLE_ERROR, DEADLINE_EXCEEDED, EVALUATING}
 
@@ -53,16 +57,7 @@ class EvaluationState:
         evaluation_key: str | None = None,
         verdict: dict[str, Any] | None = None,
     ) -> None:
-        if status not in {
-            QUEUED,
-            EVALUATING,
-            EVALUATED,
-            PASSED,
-            REJECTED,
-            RETRYABLE_ERROR,
-            PERMANENT_ERROR,
-            DEADLINE_EXCEEDED,
-        }:
+        if status not in ALL_STATES:
             raise ValueError(f"unknown AI state: {status}")
         self.status = status
         if provider is not None:
@@ -80,7 +75,8 @@ class EvaluationState:
     def start_attempt(self, provider: str | None = None) -> None:
         self.attempts += 1
         self.last_attempt_at = utc_now()
-        self.provider = provider or self.provider
+        if provider is not None:
+            self.provider = provider
         self.status = EVALUATING
         self.updated_at = utc_now()
 
@@ -90,6 +86,13 @@ class EvaluationState:
         return data
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def from_dict(data: dict[str, Any]) -> EvaluationState | None:
     if not isinstance(data, dict):
         return None
@@ -97,30 +100,20 @@ def from_dict(data: dict[str, Any]) -> EvaluationState | None:
     if not job_url:
         return None
     raw_status = str(data.get("status") or QUEUED).upper()
-    status_aliases = {
+    status = {
         "FAILED": RETRYABLE_ERROR,
         "UNRESOLVED": RETRYABLE_ERROR,
         "RETRY": RETRYABLE_ERROR,
         "RETRYABLE": RETRYABLE_ERROR,
         "DEADLINE": DEADLINE_EXCEEDED,
-    }
-    status = status_aliases.get(raw_status, raw_status)
-    if status not in {
-        QUEUED,
-        EVALUATING,
-        EVALUATED,
-        PASSED,
-        REJECTED,
-        RETRYABLE_ERROR,
-        PERMANENT_ERROR,
-        DEADLINE_EXCEEDED,
-    }:
+    }.get(raw_status, raw_status)
+    if status not in ALL_STATES:
         return None
     return EvaluationState(
         job_url=job_url,
         status=status,
-        attempts=max(0, int(data.get("attempts") or data.get("attempt_count") or 0)),
-        provider=data.get("provider"),
+        attempts=_safe_int(data.get("attempts"), _safe_int(data.get("attempt_count"))),
+        provider=str(data.get("provider") or "") or None,
         last_error=data.get("last_error") or data.get("error"),
         next_retry_at=data.get("next_retry_at"),
         last_attempt_at=data.get("last_attempt_at"),
