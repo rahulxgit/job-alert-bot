@@ -83,18 +83,18 @@ class EvaluationState:
     updated_at: str = field(default_factory=utc_now)
     verdict: dict[str, Any] | None = None
 
-    def _sync_provider_context(self) -> None:
-        """Pull per-thread provider telemetry when available, without making the
-        state model depend on evaluator implementation details."""
+    def _provider_context(self) -> dict[str, Any]:
         try:
             from ai.provider_state import get_thread_context
-            context = get_thread_context()
-            if context.get("provider"):
-                self.provider = context["provider"]
-            if context.get("provider_attempts"):
-                self.provider_attempts = int(context["provider_attempts"])
+            return get_thread_context()
         except Exception:
-            return
+            return {}
+
+    def _sync_provider_context(self, context: dict[str, Any]) -> None:
+        if context.get("provider"):
+            self.provider = context["provider"]
+        if context.get("provider_attempts"):
+            self.provider_attempts = int(context["provider_attempts"])
 
     def transition(
         self,
@@ -110,12 +110,15 @@ class EvaluationState:
             raise ValueError(f"unknown AI state: {status}")
 
         current = self.status
-        target = PERMANENT_ERROR if status == RETRYABLE_ERROR and _is_permanent_error(error) else status
+        context = self._provider_context()
+        self._sync_provider_context(context)
+        classification_error = context.get("last_failure") if status == RETRYABLE_ERROR else None
+        effective_error = classification_error or error
+        target = PERMANENT_ERROR if status == RETRYABLE_ERROR and _is_permanent_error(effective_error) else status
         allowed = ALLOWED_TRANSITIONS.get(current, set())
         if target != current and target not in allowed:
             raise ValueError(f"invalid AI state transition: {current} -> {target}")
 
-        self._sync_provider_context()
         self.status = target
         if provider is not None:
             self.provider = provider
@@ -128,12 +131,18 @@ class EvaluationState:
         if verdict is not None:
             self.verdict = verdict
 
-        if target in {EVALUATED, PASSED, REJECTED, PERMANENT_ERROR}:
+        if target in {EVALUATED, PASSED, REJECTED}:
             self.last_error = None
             self.next_retry_at = None
             self.lease_expires_at = None
-            if target in {PASSED, REJECTED, PERMANENT_ERROR}:
+            if target in {PASSED, REJECTED}:
                 self.evaluation_started_at = None
+        elif target == PERMANENT_ERROR:
+            self.next_retry_at = None
+            self.lease_expires_at = None
+            self.evaluation_started_at = None
+            if self.last_error is None:
+                self.last_error = effective_error
 
         if target == EVALUATING:
             self.evaluation_started_at = utc_now()
@@ -156,6 +165,11 @@ class EvaluationState:
             tz=timezone.utc,
         ).isoformat()
         self.run_id = str(uuid.uuid4())
+        try:
+            from ai.provider_state import reset_thread_context
+            reset_thread_context()
+        except Exception:
+            pass
         self.transition(EVALUATING, provider=provider)
 
     def is_stale(self, now: datetime | None = None) -> bool:
