@@ -45,6 +45,16 @@ jobs:
           unzip -o /tmp/ai-checkpoint.zip -d run-artifacts >/dev/null
           echo "Restored AI checkpoint artifact ${artifact_id}."
 
+      - name: Compute adaptive AI admission limit
+        env:
+          MAX_LLM_CANDIDATES: "300"
+          LLM_EVALUATION_BUDGET_SECONDS: "2700"
+          AI_MAX_CONCURRENCY: "4"
+          AI_ADMISSION_DEFAULT_LATENCY_SECONDS: "90"
+          AI_ADMISSION_SAFETY_FACTOR: "0.75"
+          AI_ADMISSION_MIN_CANDIDATES: "40"
+        run: python -m ai.admission_controller
+
       - name: Restore AI retry queue
         uses: actions/cache@v4
         with:
