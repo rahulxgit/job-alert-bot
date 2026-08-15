@@ -11,6 +11,7 @@ import requests
 import config
 from models import FitVerdict
 from ai.base import AIProvider
+from ai.provider_state import record_failure, record_request, record_success
 from utils.llm_json import as_bool, as_int, as_str_list, parse_json_object
 from utils.logging_setup import get_logger
 
@@ -48,6 +49,8 @@ class GeminiProvider(AIProvider):
         }
 
         for attempt in range(max_retries + 1):
+            started = time.monotonic()
+            record_request(self.name)
             try:
                 resp = requests.post(
                     config.GEMINI_URL,
@@ -68,6 +71,7 @@ class GeminiProvider(AIProvider):
                 )
 
                 if resp.status_code == 429:
+                    latency = time.monotonic() - started
                     retry_after_raw = resp.headers.get("Retry-After", "")
                     try:
                         retry_after = int(retry_after_raw)
@@ -76,6 +80,7 @@ class GeminiProvider(AIProvider):
 
                     wait = min(max(retry_after, 0), config.GEMINI_MAX_RETRY_WAIT_SECONDS)
                     if attempt < max_retries and wait > 0:
+                        record_failure(self.name, "RATE_LIMITED", latency, cooldown_seconds=wait)
                         log.warning(
                             "rate limited — retrying in %ss (attempt %s/%s)",
                             wait,
@@ -84,12 +89,12 @@ class GeminiProvider(AIProvider):
                         )
                         time.sleep(wait)
                         continue
+                    record_failure(self.name, "RATE_LIMITED", latency)
                     return FitVerdict(hit_rate_limit=True, reason="rate limited")
 
-                # Permanent client/auth errors are provider failures, not valid
-                # zero-score job evaluations. The evaluator will retry the same
-                # candidate rather than advancing to the next job.
                 if 400 <= resp.status_code < 500:
+                    latency = time.monotonic() - started
+                    record_failure(self.name, f"HTTP_{resp.status_code}", latency)
                     log.warning("Gemini rejected request with HTTP %s", resp.status_code)
                     return FitVerdict(reason="evaluation failed", hit_rate_limit=False)
 
@@ -100,7 +105,7 @@ class GeminiProvider(AIProvider):
                 why = as_str_list(parsed.get("why"))
                 gaps = as_str_list(parsed.get("gaps"))
                 reason = str(parsed.get("reason") or "").strip() or "; ".join(why)
-                return FitVerdict(
+                verdict = FitVerdict(
                     fit_score=as_int(parsed.get("fit_score")),
                     is_fresher_appropriate=as_bool(parsed.get("is_fresher_appropriate")),
                     reason=reason,
@@ -116,7 +121,22 @@ class GeminiProvider(AIProvider):
                     why=why,
                     gaps=gaps,
                 )
-            except (requests.RequestException, ValueError, TypeError, KeyError, IndexError) as exc:
+                record_success(self.name, time.monotonic() - started)
+                return verdict
+            except requests.Timeout as exc:
+                latency = time.monotonic() - started
+                record_failure(self.name, "TIMEOUT", latency)
+                log.warning("Gemini timeout (attempt %s/%s): %s", attempt + 1, max_retries + 1, exc)
+                if attempt == max_retries:
+                    return FitVerdict(reason="evaluation failed", hit_rate_limit=False)
+            except requests.RequestException as exc:
+                latency = time.monotonic() - started
+                record_failure(self.name, "NETWORK_ERROR", latency)
+                log.warning("evaluation failed (attempt %s/%s): %s", attempt + 1, max_retries + 1, exc)
+                if attempt == max_retries:
+                    return FitVerdict(reason="evaluation failed", hit_rate_limit=False)
+            except (ValueError, TypeError, KeyError, IndexError) as exc:
+                record_failure(self.name, "INVALID_RESPONSE", time.monotonic() - started)
                 log.warning("evaluation failed (attempt %s/%s): %s", attempt + 1, max_retries + 1, exc)
                 if attempt == max_retries:
                     return FitVerdict(reason="evaluation failed", hit_rate_limit=False)
