@@ -53,6 +53,13 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _lease_expiry() -> str:
+    return datetime.fromtimestamp(
+        datetime.now(timezone.utc).timestamp() + EVALUATION_LEASE_SECONDS,
+        tz=timezone.utc,
+    ).isoformat()
+
+
 def _is_permanent_error(error: str | None) -> bool:
     if not error:
         return False
@@ -83,18 +90,25 @@ class EvaluationState:
     updated_at: str = field(default_factory=utc_now)
     verdict: dict[str, Any] | None = None
 
-    def _provider_context(self) -> dict[str, Any]:
+    def _sync_provider_context(self) -> None:
+        """Pull per-thread provider telemetry when available."""
         try:
             from ai.provider_state import get_thread_context
-            return get_thread_context()
+            context = get_thread_context()
+            if context.get("provider"):
+                self.provider = context["provider"]
+            if context.get("provider_attempts"):
+                self.provider_attempts = int(context["provider_attempts"])
         except Exception:
-            return {}
+            return
 
-    def _sync_provider_context(self, context: dict[str, Any]) -> None:
-        if context.get("provider"):
-            self.provider = context["provider"]
-        if context.get("provider_attempts"):
-            self.provider_attempts = int(context["provider_attempts"])
+    def _begin_evaluation(self) -> None:
+        now = utc_now()
+        self.status = EVALUATING
+        self.evaluation_started_at = now
+        self.lease_expires_at = _lease_expiry()
+        self.run_id = self.run_id or str(uuid.uuid4())
+        self.updated_at = now
 
     def transition(
         self,
@@ -110,15 +124,23 @@ class EvaluationState:
             raise ValueError(f"unknown AI state: {status}")
 
         current = self.status
-        context = self._provider_context()
-        self._sync_provider_context(context)
-        classification_error = context.get("last_failure") if status == RETRYABLE_ERROR else None
-        effective_error = classification_error or error
-        target = PERMANENT_ERROR if status == RETRYABLE_ERROR and _is_permanent_error(effective_error) else status
+        target = PERMANENT_ERROR if status == RETRYABLE_ERROR and _is_permanent_error(error) else status
+
+        # A worker can fail before its initial EVALUATING snapshot is persisted.
+        # Treat this as the compound lifecycle QUEUED -> EVALUATING -> RETRYABLE_ERROR
+        # so callers cannot bypass the state machine merely because the first write
+        # raced with a worker exception.
+        if current == QUEUED and target == RETRYABLE_ERROR:
+            self.attempts = max(1, self.attempts)
+            self.last_attempt_at = self.last_attempt_at or utc_now()
+            self._begin_evaluation()
+            current = self.status
+
         allowed = ALLOWED_TRANSITIONS.get(current, set())
         if target != current and target not in allowed:
             raise ValueError(f"invalid AI state transition: {current} -> {target}")
 
+        self._sync_provider_context()
         self.status = target
         if provider is not None:
             self.provider = provider
@@ -137,20 +159,16 @@ class EvaluationState:
             self.lease_expires_at = None
             if target in {PASSED, REJECTED}:
                 self.evaluation_started_at = None
-        elif target == PERMANENT_ERROR:
+
+        if target == PERMANENT_ERROR:
+            # Keep the terminal failure reason for diagnostics, but never leave
+            # retry scheduling metadata behind.
             self.next_retry_at = None
             self.lease_expires_at = None
             self.evaluation_started_at = None
-            if self.last_error is None:
-                self.last_error = effective_error
 
-        if target == EVALUATING:
-            self.evaluation_started_at = utc_now()
-            self.lease_expires_at = datetime.fromtimestamp(
-                datetime.now(timezone.utc).timestamp() + EVALUATION_LEASE_SECONDS,
-                tz=timezone.utc,
-            ).isoformat()
-            self.run_id = self.run_id or str(uuid.uuid4())
+        if target == EVALUATING and current != EVALUATING:
+            self._begin_evaluation()
 
         self.updated_at = utc_now()
 
@@ -159,17 +177,8 @@ class EvaluationState:
         self.last_attempt_at = utc_now()
         self.provider = provider or self.provider
         self.provider_attempts = 0
-        self.evaluation_started_at = utc_now()
-        self.lease_expires_at = datetime.fromtimestamp(
-            datetime.now(timezone.utc).timestamp() + EVALUATION_LEASE_SECONDS,
-            tz=timezone.utc,
-        ).isoformat()
         self.run_id = str(uuid.uuid4())
-        try:
-            from ai.provider_state import reset_thread_context
-            reset_thread_context()
-        except Exception:
-            pass
+        self._begin_evaluation()
         self.transition(EVALUATING, provider=provider)
 
     def is_stale(self, now: datetime | None = None) -> bool:
