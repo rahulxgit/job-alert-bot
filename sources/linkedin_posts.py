@@ -65,25 +65,7 @@ class LinkedInPostsSource(JobSource):
                 resp.raise_for_status()
                 data = resp.json()
             except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 400:
-                    log.warning(f"search failed for '{term}' (400 Bad Request). Firecrawl will be used as a fallback.")
-                else:
-                    log.warning(f"search failed for '{term}': {e}")
-                continue
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 400:
-                    log.warning(f"search failed for '{term}' (400 Bad Request). Firecrawl will be used as a fallback.")
-                else:
-                    log.warning(f"search failed for '{term}': {e}")
-                continue
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 400:
-                    log.warning(f"search failed for '{term}' (400 Bad Request). Firecrawl will be used as a fallback.")
-                else:
-                    log.warning(f"search failed for '{term}': {e}")
-                continue
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 400:
+                if e.response is not None and e.response.status_code == 400:
                     log.warning(f"search failed for '{term}' (400 Bad Request). Firecrawl will be used as a fallback.")
                 else:
                     log.warning(f"search failed for '{term}': {e}")

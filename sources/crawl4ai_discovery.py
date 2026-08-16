@@ -285,6 +285,18 @@ async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
         jobs_discovered=len(rows), seed_failures=seed_failures,
     )
     log.info("[Crawl4AI] Discovery metrics: seeds=%s succeeded=%s failed=%s pages=%s jobs=%s", metrics.seeds_attempted, metrics.seeds_succeeded, metrics.seed_failures, metrics.pages_seen, metrics.jobs_discovered)
+
+    # Every seed failing outright (0 successes, at least one seed attempted) means
+    # the crawler itself is broken (e.g. missing browser binaries, blocked network)
+    # rather than "legitimately found nothing." Surface this as a real failure
+    # instead of letting main.py record it as a healthy NO_RESULTS source, so it
+    # shows up in the daily digest's source-health line and doesn't go unnoticed.
+    if metrics.seeds_attempted > 0 and metrics.seeds_succeeded == 0:
+        raise RuntimeError(
+            f"Crawl4AI discovery: all {metrics.seeds_attempted} seeds failed — "
+            "likely a browser/network problem, not a real 0-results day"
+        )
+
     return rows, metrics
 
 

@@ -1,0 +1,37 @@
+{
+  "updated_at": "2026-08-16T03:13:09.959571+00:00",
+  "providers": {
+    "Gemini": {
+      "state": "AVAILABLE",
+      "consecutive_failures": 0,
+      "requests": 2,
+      "successes": 1,
+      "timeouts": 0,
+      "rate_limits": 3,
+      "server_errors": 0,
+      "invalid_responses": 1,
+      "other_errors": 0,
+      "recovery_count": 1,
+      "average_latency_seconds": 1.509,
+      "last_error": null,
+      "last_transition_at": "2026-08-16T03:13:09.959143+00:00",
+      "cooldown_active": false
+    },
+    "AI Gateway": {
+      "state": "AVAILABLE",
+      "consecutive_failures": 0,
+      "requests": 1,
+      "successes": 1,
+      "timeouts": 0,
+      "rate_limits": 0,
+      "server_errors": 0,
+      "invalid_responses": 0,
+      "other_errors": 0,
+      "recovery_count": 0,
+      "average_latency_seconds": 0.008,
+      "last_error": null,
+      "last_transition_at": "2026-08-16T03:13:09.904423+00:00",
+      "cooldown_active": false
+    }
+  }
+}
