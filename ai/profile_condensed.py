@@ -97,7 +97,13 @@ def build_condensed_profile() -> str:
     try:
         data = load_canonical_profile()
         identity = data.get("identity", {})
-        education = data.get("education", {})
+        education_raw = data.get("education", {})
+        if isinstance(education_raw, list):
+            education = education_raw[0] if education_raw else {}
+        elif isinstance(education_raw, dict):
+            education = education_raw
+        else:
+            education = {}
         skills = _collect_skills(data)
         projects = _top_projects(data)
         experiences = data.get("experience", []) or []
@@ -126,15 +132,23 @@ def build_condensed_profile() -> str:
         lines.append("\n## Education")
         if isinstance(education, dict):
             degree = education.get("degree") or education.get("program")
-            institution = education.get("institution")
-            graduation = education.get("graduation_year") or education.get("year")
-            if degree or institution:
-                detail = " — ".join(x for x in (degree, institution) if x)
+            institution = education.get("institution") or education.get("institution_short")
+            graduation = education.get("graduation_year") or education.get("year") or education.get("end_year")
+            branch = education.get("branch")
+            if degree or institution or branch:
+                detail_parts = [degree]
+                if branch:
+                    detail_parts.append(f"in {branch}")
+                if institution:
+                    detail_parts.append(institution)
+                detail = " — ".join(x for x in detail_parts if x)
                 if graduation:
                     detail += f" ({graduation})"
                 lines.append(detail)
             score = education.get("cgpa") or education.get("gpa")
-            if score:
+            if isinstance(score, dict):
+                score = score.get("value")
+            if score not in (None, ""):
                 lines.append(f"CGPA/GPA: {score}")
         else:
             lines.append("Not available")
