@@ -233,4 +233,4 @@ def build_condensed_profile() -> str:
         return "\n".join(lines).strip()
     except Exception as exc:
         log.exception("Failed to build condensed candidate profile: %s", exc)
-        raise
+        return "Candidate profile unavailable — evaluate conservatively and note the gap."
