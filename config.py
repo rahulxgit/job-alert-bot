@@ -96,10 +96,10 @@ CRAWL4AI_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_MIN_DESCRIPTION_CH
 CRAWL4AI_DISCOVERY_ENABLED = os.environ.get("CRAWL4AI_DISCOVERY_ENABLED", "false").lower() == "true"
 CRAWL4AI_DISCOVERY_TIMEOUT = int(os.environ.get("CRAWL4AI_DISCOVERY_TIMEOUT", "20"))
 CRAWL4AI_DISCOVERY_MAX_SEEDS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_SEEDS", "12"))
-CRAWL4AI_DISCOVERY_MAX_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_PAGES", "20"))
+CRAWL4AI_DISCOVERY_MAX_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_PAGES", "40"))
 CRAWL4AI_DISCOVERY_MAX_DEPTH = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DEPTH", "2"))
 CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES", "12"))
-CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS", "400"))
+CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS", "250"))
 CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS", "6000"))
 CRAWL4AI_DISCOVERY_LOCATIONS = ["Bengaluru", "Bangalore", "Pune", "Hyderabad", "Gurugram", "Gurgaon", "Noida", "Delhi NCR", "Mumbai", "Chennai", "Kolkata", "Ahmedabad", "Remote", "India"]
 CRAWL4AI_DISCOVERY_SEED_URLS = [
@@ -187,6 +187,9 @@ EDUCATION_OPEN_SIGNALS = [
     "bachelors degree", "engineering degree", "technology or engineering", "computer science or related field",
 ]
 FRESHNESS_DAYS = int(os.environ.get("PREFILTER_FRESHNESS_DAYS", "30"))
+
+# AI profile mode: condensed is the default to keep evaluation prompts small.
+AI_PROFILE_MODE = os.environ.get("AI_PROFILE_MODE", "condensed")
 
 LLM_EVALUATION_BUDGET_SECONDS = int(os.environ.get("LLM_EVALUATION_BUDGET_SECONDS", "86400"))
 
