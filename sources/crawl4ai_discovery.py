@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
@@ -44,7 +46,6 @@ _DEFAULT_DISCOVERY_DOMAINS = [
     "www.ycombinator.com", "cutshort.io", "www.cutshort.io", "instahyre.com", "www.instahyre.com",
     "hiringcafe.com", "www.hiringcafe.com",
 ]
-
 
 @dataclass(frozen=True)
 class DiscoveryMetrics:
@@ -242,6 +243,16 @@ async def _crawl_seed(crawler, seed: str, run_config) -> tuple[str, list[JobList
         return seed, [], pages_seen, False
 
 
+def _write_diagnostics(results: list[tuple[str, list[JobListing], int, bool]], metrics: DiscoveryMetrics) -> None:
+    path = Path("run-artifacts/crawl4ai-discovery-diagnostics.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    seeds = []
+    for seed, rows, pages, succeeded in results:
+        seeds.append({"seed": seed, "pages_seen": pages, "jobs_discovered": len(rows), "status": "SUCCESS" if succeeded else "FAILED"})
+    payload = {"metrics": asdict(metrics), "seeds": seeds}
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
     max_seeds = max(1, int(getattr(config, "CRAWL4AI_DISCOVERY_MAX_SEEDS", 12)))
     seeds = [seed for seed in _discovery_seeds()[:max_seeds] if _allowed_host(seed)]
@@ -285,6 +296,7 @@ async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
         jobs_discovered=len(rows), seed_failures=seed_failures,
     )
     log.info("[Crawl4AI] Discovery metrics: seeds=%s succeeded=%s failed=%s pages=%s jobs=%s", metrics.seeds_attempted, metrics.seeds_succeeded, metrics.seed_failures, metrics.pages_seen, metrics.jobs_discovered)
+    _write_diagnostics(results, metrics)
 
     # Every seed failing outright (0 successes, at least one seed attempted) means
     # the crawler itself is broken (e.g. missing browser binaries, blocked network)
