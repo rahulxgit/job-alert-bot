@@ -21,7 +21,6 @@ the default.
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from ai.profile_adapter import load_canonical_profile
@@ -29,22 +28,8 @@ from utils.logging_setup import get_logger
 
 log = get_logger("profile_condensed")
 
-# Cap on distinct project entries pulled into the prompt — flagship +
-# strongest AI/professional projects only. Long tails of low-value repos
-# (learning clones, archived stuff) add tokens without adding signal.
 MAX_PROJECTS = 8
 MAX_SKILLS = 30
-
-
-def _safe_get(d: dict, *path, default=None):
-    cur = d
-    for key in path:
-        if not isinstance(cur, dict):
-            return default
-        cur = cur.get(key)
-        if cur is None:
-            return default
-    return cur
 
 
 def _project_line(project: dict) -> str:
@@ -70,8 +55,6 @@ def _collect_skills(data: dict) -> list[str]:
             verified = tech.get("verified", []) if isinstance(tech, dict) else []
             for item in verified:
                 seen.setdefault(item, None)
-    # Prioritize a known core stack first (matches config.PROFILE_KEYWORDS
-    # spirit) so truncation to MAX_SKILLS keeps the highest-signal terms.
     priority = [
         "React", "React 19", "Next.js 15", "Node.js", "Express.js 4", "TypeScript 5",
         "MongoDB Atlas", "PostgreSQL", "Prisma", "Docker", "MCP (Model Context Protocol)",
@@ -86,24 +69,80 @@ def _top_projects(data: dict) -> list[dict]:
     flagship = projects.get("flagship_projects", []) or []
     ai_projects = [p for p in (projects.get("ai_projects", []) or []) if p.get("name") != "AI SEO Audit Platform"]
     professional = projects.get("professional_projects", []) or []
-    combined = flagship + ai_projects + professional
-    return combined[:MAX_PROJECTS]
+    return (flagship + ai_projects + professional)[:MAX_PROJECTS]
+
+
+def _first_dict(value: Any) -> dict:
+    """Return the first useful mapping from a dict/list/nested schema."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict) and item:
+                return item
+    return {}
+
+
+def _find_first_alias(data: Any, aliases: set[str]) -> Any:
+    """Find the first non-empty value whose normalized key matches an alias."""
+    normalized = {"".join(ch for ch in alias.lower() if ch.isalnum()) for alias in aliases}
+
+    def walk(node: Any) -> Any:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                key_norm = "".join(ch for ch in str(key).lower() if ch.isalnum())
+                if key_norm in normalized and value not in (None, "", [], {}):
+                    return value
+                found = walk(value)
+                if found not in (None, "", [], {}):
+                    return found
+        elif isinstance(node, list):
+            for item in node:
+                found = walk(item)
+                if found not in (None, "", [], {}):
+                    return found
+        return None
+
+    return walk(data)
+
+
+def _education_details(data: dict) -> tuple[str, str, Any, Any]:
+    """Extract education facts across supported canonical-profile shapes."""
+    raw = data.get("education")
+    education = _first_dict(raw)
+
+    degree = education.get("degree") or education.get("program")
+    institution = education.get("institution") or education.get("institution_short")
+    branch = education.get("branch") or education.get("discipline") or education.get("major")
+    graduation = (
+        education.get("graduation_year")
+        or education.get("year")
+        or education.get("end_year")
+    )
+    score = education.get("cgpa") or education.get("gpa")
+
+    if not institution:
+        institution = _find_first_alias(data, {"institution_short", "institution"})
+    if not branch:
+        branch = _find_first_alias(data, {"branch", "major", "discipline"})
+    if not degree:
+        degree = _find_first_alias(data, {"degree", "program"})
+    if not graduation:
+        graduation = _find_first_alias(data, {"graduation_year", "end_year", "graduation"})
+    if not score:
+        score = _find_first_alias(data, {"cgpa", "gpa"})
+
+    if isinstance(score, dict):
+        score = score.get("value")
+
+    return str(degree or ""), str(institution or ""), graduation, branch
 
 
 def build_condensed_profile() -> str:
-    """Return a compact, evaluator-ready candidate summary (skills, projects,
-    education, experience, CP/achievements, targets) — no verification notes,
-    no duplicate tech listings, no portfolio metadata."""
+    """Return a compact, evaluator-ready candidate summary."""
     try:
         data = load_canonical_profile()
-        identity = data.get("identity", {})
-        education_raw = data.get("education", {})
-        if isinstance(education_raw, list):
-            education = education_raw[0] if education_raw else {}
-        elif isinstance(education_raw, dict):
-            education = education_raw
-        else:
-            education = {}
+        identity = data.get("identity", {}) if isinstance(data.get("identity"), dict) else {}
         skills = _collect_skills(data)
         projects = _top_projects(data)
         experiences = data.get("experience", []) or []
@@ -111,6 +150,7 @@ def build_condensed_profile() -> str:
         objective = data.get("career_objective", "")
         prefs = data.get("job_preferences", {}) or {}
         cp = data.get("competitive_programming", {}) or {}
+        degree, institution, graduation, branch = _education_details(data)
 
         lines = ["CANDIDATE PROFILE (condensed)"]
         headline = identity.get("headline") or bios.get("headline")
@@ -130,28 +170,24 @@ def build_condensed_profile() -> str:
             lines.append("- None listed")
 
         lines.append("\n## Education")
-        if isinstance(education, dict):
-            degree = education.get("degree") or education.get("program")
-            institution = education.get("institution") or education.get("institution_short")
-            graduation = education.get("graduation_year") or education.get("year") or education.get("end_year")
-            branch = education.get("branch")
-            if degree or institution or branch:
-                detail_parts = [degree]
-                if branch:
-                    detail_parts.append(f"in {branch}")
-                if institution:
-                    detail_parts.append(institution)
-                detail = " — ".join(x for x in detail_parts if x)
-                if graduation:
-                    detail += f" ({graduation})"
-                lines.append(detail)
-            score = education.get("cgpa") or education.get("gpa")
-            if isinstance(score, dict):
-                score = score.get("value")
-            if score not in (None, ""):
-                lines.append(f"CGPA/GPA: {score}")
+        detail_parts = [degree]
+        if branch:
+            detail_parts.append(f"in {branch}")
+        if institution:
+            detail_parts.append(institution)
+        detail = " — ".join(x for x in detail_parts if x)
+        if graduation:
+            detail += f" ({graduation})"
+        if detail:
+            lines.append(detail)
         else:
             lines.append("Not available")
+
+        score = _first_dict(data.get("education")).get("cgpa") or _first_dict(data.get("education")).get("gpa")
+        if isinstance(score, dict):
+            score = score.get("value")
+        if score not in (None, ""):
+            lines.append(f"CGPA/GPA: {score}")
 
         lines.append("\n## Experience")
         for exp in experiences[:6]:
