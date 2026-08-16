@@ -106,13 +106,16 @@ def _find_first_alias(data: Any, aliases: set[str]) -> Any:
     return walk(data)
 
 
-def _education_details(data: dict) -> tuple[str, str, Any, Any]:
+def _education_details(data: dict) -> tuple[str, str, Any, Any, Any]:
     """Extract education facts across supported canonical-profile shapes."""
     raw = data.get("education")
     education = _first_dict(raw)
 
     degree = education.get("degree") or education.get("program")
-    institution = education.get("institution") or education.get("institution_short")
+    # Prefer the canonical short institution name when present because it is
+    # the stable display label used by matching/tests; fall back to the full
+    # institution name only when no short name exists.
+    institution = education.get("institution_short") or education.get("institution")
     branch = education.get("branch") or education.get("discipline") or education.get("major")
     graduation = (
         education.get("graduation_year")
@@ -135,7 +138,7 @@ def _education_details(data: dict) -> tuple[str, str, Any, Any]:
     if isinstance(score, dict):
         score = score.get("value")
 
-    return str(degree or ""), str(institution or ""), graduation, branch
+    return str(degree or ""), str(institution or ""), graduation, branch, score
 
 
 def build_condensed_profile() -> str:
@@ -150,7 +153,7 @@ def build_condensed_profile() -> str:
         objective = data.get("career_objective", "")
         prefs = data.get("job_preferences", {}) or {}
         cp = data.get("competitive_programming", {}) or {}
-        degree, institution, graduation, branch = _education_details(data)
+        degree, institution, graduation, branch, score = _education_details(data)
 
         lines = ["CANDIDATE PROFILE (condensed)"]
         headline = identity.get("headline") or bios.get("headline")
@@ -178,14 +181,7 @@ def build_condensed_profile() -> str:
         detail = " — ".join(x for x in detail_parts if x)
         if graduation:
             detail += f" ({graduation})"
-        if detail:
-            lines.append(detail)
-        else:
-            lines.append("Not available")
-
-        score = _first_dict(data.get("education")).get("cgpa") or _first_dict(data.get("education")).get("gpa")
-        if isinstance(score, dict):
-            score = score.get("value")
+        lines.append(detail if detail else "Not available")
         if score not in (None, ""):
             lines.append(f"CGPA/GPA: {score}")
 
