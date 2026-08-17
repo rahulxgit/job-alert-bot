@@ -47,6 +47,13 @@ _DEFAULT_DISCOVERY_DOMAINS = [
     "hiringcafe.com", "www.hiringcafe.com",
 ]
 
+_ANTI_BOT_SIGNALS = (
+    "checking your browser", "just a moment", "attention required",
+    "cloudflare", "captcha", "access denied", "are you a robot",
+    "please verify you are a human", "enable javascript and cookies",
+)
+
+
 @dataclass(frozen=True)
 class DiscoveryMetrics:
     seeds_attempted: int = 0
@@ -54,6 +61,8 @@ class DiscoveryMetrics:
     pages_seen: int = 0
     jobs_discovered: int = 0
     seed_failures: int = 0
+    candidate_urls_found: int = 0
+    anti_bot_seeds: int = 0
 
 
 def _discovery_seeds() -> list[str]:
@@ -182,6 +191,19 @@ def _looks_like_job_text(markdown: str) -> bool:
     return sum(1 for signal in _JOB_TEXT_SIGNALS if signal in low) >= 1
 
 
+def _looks_like_anti_bot(markdown: str) -> bool:
+    """Cheap heuristic: a Cloudflare/JS challenge or captcha page renders as a
+    tiny amount of markdown carrying one of a handful of stock phrases. A real
+    board root page is never this short."""
+    stripped = (markdown or "").strip()
+    if not stripped:
+        return False
+    low = stripped.lower()
+    if len(stripped) < 400 and any(signal in low for signal in _ANTI_BOT_SIGNALS):
+        return True
+    return False
+
+
 def _to_listing(url: str, markdown: str, seed_title: str = "") -> JobListing:
     title = _extract_title(markdown, seed_title)
     return JobListing(
@@ -225,9 +247,20 @@ def _extract_result_markdown(result) -> tuple[str, str, str]:
     return url, markdown, title
 
 
-async def _crawl_seed(crawler, seed: str, run_config) -> tuple[str, list[JobListing], int, bool]:
+async def _crawl_seed(crawler, seed: str, run_config) -> tuple[str, list[JobListing], int, bool, int, bool]:
+    """Returns (seed, discovered_listings, pages_seen, request_success,
+    candidate_urls_found, anti_bot_detected).
+
+    request_success only means the page fetch/render didn't raise — it says
+    nothing about whether anything useful was extracted. candidate_urls_found
+    counts URLs on-domain that look like job-detail links (before the stricter
+    job-text content check), so a seed that renders fine but yields zero
+    candidates can be told apart from one that genuinely has no matches.
+    """
     discovered: list[JobListing] = []
     pages_seen = 0
+    candidate_urls_found = 0
+    anti_bot_detected = False
     try:
         results = await crawler.arun(url=seed, config=run_config)
         async for result in results:
@@ -235,20 +268,43 @@ async def _crawl_seed(crawler, seed: str, run_config) -> tuple[str, list[JobList
             url, markdown, title = _extract_result_markdown(result)
             if not url or not _allowed_host(url):
                 continue
-            if _looks_job_url(url, title) and _looks_like_job_text(markdown):
-                discovered.append(_to_listing(url, markdown, title))
-        return seed, discovered, pages_seen, True
+            if _looks_like_anti_bot(markdown):
+                anti_bot_detected = True
+                continue
+            if _looks_job_url(url, title):
+                candidate_urls_found += 1
+                if _looks_like_job_text(markdown):
+                    discovered.append(_to_listing(url, markdown, title))
+        return seed, discovered, pages_seen, True, candidate_urls_found, anti_bot_detected
     except Exception as exc:
         log.warning("[Crawl4AI] Discovery failed for seed %s: %s", seed, exc)
-        return seed, [], pages_seen, False
+        return seed, [], pages_seen, False, 0, False
 
 
-def _write_diagnostics(results: list[tuple[str, list[JobListing], int, bool]], metrics: DiscoveryMetrics) -> None:
+def _write_diagnostics(results: list[tuple[str, list[JobListing], int, bool, int, bool]], metrics: DiscoveryMetrics) -> None:
     path = Path("run-artifacts/crawl4ai-discovery-diagnostics.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     seeds = []
-    for seed, rows, pages, succeeded in results:
-        seeds.append({"seed": seed, "pages_seen": pages, "jobs_discovered": len(rows), "status": "SUCCESS" if succeeded else "FAILED"})
+    for seed, rows, pages, request_success, candidate_urls_found, anti_bot_detected in results:
+        if anti_bot_detected:
+            seed_status = "BLOCKED"
+        elif not request_success:
+            seed_status = "FAILED"
+        elif candidate_urls_found == 0:
+            seed_status = "NO_CANDIDATES"
+        elif not rows:
+            seed_status = "CANDIDATES_NOT_VALIDATED"
+        else:
+            seed_status = "SUCCESS"
+        seeds.append({
+            "seed": seed,
+            "pages_seen": pages,
+            "candidate_urls_found": candidate_urls_found,
+            "jobs_discovered": len(rows),
+            "anti_bot_detected": anti_bot_detected,
+            "request_success": request_success,
+            "status": seed_status,
+        })
     payload = {"metrics": asdict(metrics), "seeds": seeds}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -270,6 +326,8 @@ async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
     seed_successes = 0
     seed_failures = 0
     pages_seen = 0
+    candidate_urls_found = 0
+    anti_bot_seeds = 0
     semaphore = asyncio.Semaphore(_seed_concurrency())
 
     async with AsyncWebCrawler(config=BrowserConfig(headless=True)) as crawler:
@@ -278,11 +336,16 @@ async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
                 return await _crawl_seed(crawler, seed, run_config)
         results = await asyncio.gather(*(bounded_seed(seed) for seed in seeds))
 
-    for seed, rows, seed_pages_seen, succeeded in results:
+    for seed, rows, seed_pages_seen, request_success, seed_candidates, anti_bot_detected in results:
         pages_seen += seed_pages_seen
-        seed_successes += int(succeeded)
-        seed_failures += int(not succeeded)
-        log.info("[Crawl4AI] Seed %s: pages=%s jobs=%s status=%s", seed, seed_pages_seen, len(rows), "SUCCESS" if succeeded else "FAILED")
+        seed_successes += int(request_success)
+        seed_failures += int(not request_success)
+        candidate_urls_found += seed_candidates
+        anti_bot_seeds += int(anti_bot_detected)
+        log.info(
+            "[Crawl4AI] Seed %s: pages=%s candidates=%s jobs=%s anti_bot=%s request_success=%s",
+            seed, seed_pages_seen, seed_candidates, len(rows), anti_bot_detected, request_success,
+        )
         for row in rows:
             unique_rows.setdefault(row.job_url, row)
             if len(unique_rows) >= config.CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES:
@@ -294,8 +357,13 @@ async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
     metrics = DiscoveryMetrics(
         seeds_attempted=len(seeds), seeds_succeeded=seed_successes, pages_seen=pages_seen,
         jobs_discovered=len(rows), seed_failures=seed_failures,
+        candidate_urls_found=candidate_urls_found, anti_bot_seeds=anti_bot_seeds,
     )
-    log.info("[Crawl4AI] Discovery metrics: seeds=%s succeeded=%s failed=%s pages=%s jobs=%s", metrics.seeds_attempted, metrics.seeds_succeeded, metrics.seed_failures, metrics.pages_seen, metrics.jobs_discovered)
+    log.info(
+        "[Crawl4AI] Discovery metrics: seeds=%s succeeded=%s failed=%s anti_bot=%s pages=%s candidates=%s jobs=%s",
+        metrics.seeds_attempted, metrics.seeds_succeeded, metrics.seed_failures,
+        metrics.anti_bot_seeds, metrics.pages_seen, metrics.candidate_urls_found, metrics.jobs_discovered,
+    )
     _write_diagnostics(results, metrics)
 
     # Every seed failing outright (0 successes, at least one seed attempted) means
@@ -307,6 +375,24 @@ async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
         raise RuntimeError(
             f"Crawl4AI discovery: all {metrics.seeds_attempted} seeds failed — "
             "likely a browser/network problem, not a real 0-results day"
+        )
+
+    # A page can render fine (request_success=True) while every seed is a
+    # Cloudflare/JS challenge or otherwise yields zero job-shaped candidate
+    # URLs. That is exactly today's incident (12/12 "succeeded", 0 jobs) and
+    # must not be reported as a healthy NO_RESULTS run — transport success is
+    # not discovery success.
+    if metrics.seeds_attempted > 0 and metrics.seeds_succeeded > 0 and metrics.candidate_urls_found == 0:
+        if metrics.anti_bot_seeds > 0:
+            raise RuntimeError(
+                f"Crawl4AI discovery: {metrics.anti_bot_seeds}/{metrics.seeds_attempted} seeds "
+                "returned anti-bot/challenge pages and zero real candidate URLs were found — "
+                "treating as BLOCKED, not a real 0-results day"
+            )
+        raise RuntimeError(
+            f"Crawl4AI discovery: {metrics.seeds_succeeded} seeds rendered successfully but "
+            "zero job-shaped candidate URLs were extracted from any of them — likely selector/"
+            "extraction drift, not a real 0-results day"
         )
 
     return rows, metrics

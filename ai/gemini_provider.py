@@ -62,7 +62,11 @@ class GeminiProvider(AIProvider):
                         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                         "generationConfig": {
                             "temperature": 0,
-                            "maxOutputTokens": 512,
+                            # 512 was too tight for the full structured verdict
+                            # (8 scores + decision + why[] + gaps[]) and was
+                            # silently truncating valid JSON mid-object even
+                            # with responseMimeType=application/json set.
+                            "maxOutputTokens": config.GEMINI_MAX_OUTPUT_TOKENS,
                             "responseMimeType": "application/json",
                             "responseSchema": response_schema,
                         },

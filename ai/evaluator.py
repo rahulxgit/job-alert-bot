@@ -100,7 +100,9 @@ reject = hard eligibility blocker, seniority mismatch, or very poor alignment
 OUTPUT
 ======
 Return ONLY valid JSON. No markdown fences or surrounding prose.
-All numeric fields are integers. why and gaps are arrays of strings.
+All numeric fields are integers. why and gaps are arrays of at most 3 short
+strings each (under ~15 words) — be concise, not exhaustive, so the response
+stays well within the output token budget and is never truncated mid-JSON.
 
 {{
   "fit_score": 0,

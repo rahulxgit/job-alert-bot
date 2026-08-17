@@ -196,13 +196,31 @@ AI_PROFILE_MODE = os.environ.get("AI_PROFILE_MODE", "condensed")
 LLM_EVALUATION_BUDGET_SECONDS = int(os.environ.get("LLM_EVALUATION_BUDGET_SECONDS", "86400"))
 
 # --- AI provider resilience -------------------------------------------------
-AI_GATEWAY_TIMEOUT_SECONDS = int(os.environ.get("AI_GATEWAY_TIMEOUT_SECONDS", "12"))
+# The gateway is a self-hosted multi-provider failover chain (github.com/
+# rahulxgit/ai-gateway) on Render's free tier: a cold provider can take
+# 30-90s to wake up before the gateway's own internal failover even kicks
+# in (see that repo's timeout-override.test.ts for a measured 61s NVIDIA
+# NIM cold start). A 12s client-side timeout killed almost every request
+# before the gateway had a chance to succeed, forcing a same-request
+# fallback to Gemini on nearly every job and burning Gemini's tight quota.
+AI_GATEWAY_TIMEOUT_SECONDS = int(os.environ.get("AI_GATEWAY_TIMEOUT_SECONDS", "75"))
 AI_GATEWAY_MAX_RETRIES = int(os.environ.get("AI_GATEWAY_MAX_RETRIES", "1"))
-AI_GATEWAY_RETRY_DELAY_SECONDS = float(os.environ.get("AI_GATEWAY_RETRY_DELAY_SECONDS", "2"))
-GEMINI_TIMEOUT_SECONDS = int(os.environ.get("GEMINI_TIMEOUT_SECONDS", "30"))
+AI_GATEWAY_RETRY_DELAY_SECONDS = float(os.environ.get("AI_GATEWAY_RETRY_DELAY_SECONDS", "3"))
+# The gateway defaults to 1024 output tokens per request when no maxTokens
+# is supplied (see OpenAICompatibleAdapter DEFAULT_MAX_TOKENS in that repo).
+# Our fit-evaluation JSON (8 scores + decision + why[] + gaps[]) can exceed
+# that, so the response gets cut off mid-JSON and fails to parse. Ask for
+# more headroom explicitly.
+AI_GATEWAY_MAX_TOKENS = int(os.environ.get("AI_GATEWAY_MAX_TOKENS", "2048"))
+GEMINI_TIMEOUT_SECONDS = int(os.environ.get("GEMINI_TIMEOUT_SECONDS", "45"))
 GEMINI_MAX_RETRIES = int(os.environ.get("GEMINI_MAX_RETRIES", "1"))
 GEMINI_MAX_RETRY_WAIT_SECONDS = int(os.environ.get("GEMINI_MAX_RETRY_WAIT_SECONDS", "10"))
 GEMINI_QUOTA_COOLDOWN_SECONDS = int(os.environ.get("GEMINI_QUOTA_COOLDOWN_SECONDS", "3600"))
+# Same truncation risk as the gateway — 512 tokens was too tight for the
+# full structured verdict and was a major source of "did not contain a
+# JSON object" failures even though responseMimeType=application/json was
+# already set.
+GEMINI_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "1536"))
 
 # --- AI throughput / observability ------------------------------------------
 AI_MAX_CONCURRENCY = max(1, int(os.environ.get("AI_MAX_CONCURRENCY", "4")))

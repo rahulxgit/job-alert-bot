@@ -41,6 +41,10 @@ class GatewayProvider(AIProvider):
                     json={
                         "messages": [{"role": "user", "content": prompt}],
                         "taskType": "reasoning",
+                        # Gateway defaults to 1024 output tokens when this is
+                        # omitted, which truncates our structured verdict
+                        # JSON mid-object. Ask for real headroom.
+                        "maxTokens": config.AI_GATEWAY_MAX_TOKENS,
                     },
                     timeout=config.AI_GATEWAY_TIMEOUT_SECONDS,
                 )

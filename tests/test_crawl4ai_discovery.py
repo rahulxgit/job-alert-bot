@@ -76,7 +76,8 @@ def test_discovery_seeds_run_with_bounded_concurrency(monkeypatch):
             return False
 
     async def fake_seed(crawler, seed, run_config):
-        return seed, [], 1, True
+        # (seed, discovered, pages_seen, request_success, candidate_urls_found, anti_bot_detected)
+        return seed, [], 1, True, 1, False
 
     with patch.object(discovery, "AsyncWebCrawler", return_value=FakeCrawler()):
         with patch.object(discovery, "_crawl_seed", new=AsyncMock(side_effect=fake_seed)) as mock_seed:
@@ -87,4 +88,65 @@ def test_discovery_seeds_run_with_bounded_concurrency(monkeypatch):
     assert metrics.seeds_succeeded == 3
     assert metrics.seed_failures == 0
     assert metrics.pages_seen == 3
+    assert metrics.candidate_urls_found == 3
     assert mock_seed.await_count == 3
+
+
+def test_discovery_raises_when_seeds_succeed_but_find_zero_candidates(monkeypatch):
+    """Reproduces the reported incident: 12 seeds technically succeed but
+    extraction finds zero job-shaped URLs. Transport success must not be
+    reported as discovery success."""
+    seeds = ["https://boards.greenhouse.io/", "https://jobs.lever.co/"]
+    monkeypatch.setattr(config, "CRAWL4AI_DISCOVERY_SEED_URLS", seeds)
+    monkeypatch.setattr(config, "CRAWL4AI_DISCOVERY_MAX_SEEDS", 2)
+    monkeypatch.setattr(config, "CRAWL4AI_DISCOVERY_SEED_CONCURRENCY", 2)
+
+    class FakeCrawler:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_seed(crawler, seed, run_config):
+        return seed, [], 5, True, 0, False
+
+    with patch.object(discovery, "AsyncWebCrawler", return_value=FakeCrawler()):
+        with patch.object(discovery, "_crawl_seed", new=AsyncMock(side_effect=fake_seed)):
+            try:
+                __import__("asyncio").run(discovery._discover())
+            except RuntimeError as exc:
+                assert "zero job-shaped candidate URLs" in str(exc)
+            else:
+                raise AssertionError("technically-successful zero-candidate run was not flagged")
+
+
+def test_discovery_raises_blocked_when_anti_bot_pages_detected(monkeypatch):
+    seeds = ["https://boards.greenhouse.io/", "https://jobs.lever.co/"]
+    monkeypatch.setattr(config, "CRAWL4AI_DISCOVERY_SEED_URLS", seeds)
+    monkeypatch.setattr(config, "CRAWL4AI_DISCOVERY_MAX_SEEDS", 2)
+    monkeypatch.setattr(config, "CRAWL4AI_DISCOVERY_SEED_CONCURRENCY", 2)
+
+    class FakeCrawler:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_seed(crawler, seed, run_config):
+        return seed, [], 1, True, 0, True
+
+    with patch.object(discovery, "AsyncWebCrawler", return_value=FakeCrawler()):
+        with patch.object(discovery, "_crawl_seed", new=AsyncMock(side_effect=fake_seed)):
+            try:
+                __import__("asyncio").run(discovery._discover())
+            except RuntimeError as exc:
+                assert "anti-bot" in str(exc) or "BLOCKED" in str(exc)
+            else:
+                raise AssertionError("anti-bot pages were not flagged as blocked")
+
+
+def test_looks_like_anti_bot_detects_short_challenge_pages():
+    assert discovery._looks_like_anti_bot("Just a moment...\nChecking your browser before accessing.")
+    assert not discovery._looks_like_anti_bot("Software Engineer\nRequirements\n" + "x" * 400)

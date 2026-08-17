@@ -40,12 +40,16 @@ from mailer.digest import build_email_body
 
 log = get_logger("main")
 
+# Crawl4AI Discovery runs first: it's a complete, independent job-search
+# source in its own right (crawls board roots with the same canonical
+# SEARCH_TERMS-derived signals and extracts job-detail links directly),
+# not just a fallback enrichment step for the other sources below.
 ALL_SOURCES = [
+    Crawl4AIDiscoverySource(),
     LinkedInSource(), GoogleJobsSource(),
     InternshalaSource(), NaukriSource(), WellfoundSource(),
     GreenhouseSource(), LeverSource(), YouTubeSource(), LinkedInPostsSource(),
     ArbeitnowSource(), RemoteOKSource(),
-    Crawl4AIDiscoverySource(),
     FirecrawlSource(),
 ]
 

@@ -103,6 +103,13 @@ jobs:
           JOBSPY_CALL_TIMEOUT_SECONDS: "60"
           LLM_EVALUATION_BUDGET_SECONDS: "3300"
           AI_MAX_CONCURRENCY: "6"
+          # The gateway (Render free tier) can take well over the old 12s
+          # to wake a cold provider; give it real headroom instead of
+          # falling back to Gemini on nearly every request.
+          AI_GATEWAY_TIMEOUT_SECONDS: "75"
+          AI_GATEWAY_MAX_TOKENS: "2048"
+          GEMINI_TIMEOUT_SECONDS: "45"
+          GEMINI_MAX_OUTPUT_TOKENS: "1536"
           SOURCE_406_BREAKER_THRESHOLD: "3"
           SOURCE_404_BREAKER_THRESHOLD: "10"
           CRAWL_PROVIDER: "auto"
