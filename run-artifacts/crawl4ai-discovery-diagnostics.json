@@ -1,0 +1,31 @@
+{
+  "metrics": {
+    "seeds_attempted": 2,
+    "seeds_succeeded": 2,
+    "pages_seen": 2,
+    "jobs_discovered": 0,
+    "seed_failures": 0,
+    "candidate_urls_found": 0,
+    "anti_bot_seeds": 2
+  },
+  "seeds": [
+    {
+      "seed": "https://boards.greenhouse.io/",
+      "pages_seen": 1,
+      "candidate_urls_found": 0,
+      "jobs_discovered": 0,
+      "anti_bot_detected": true,
+      "request_success": true,
+      "status": "BLOCKED"
+    },
+    {
+      "seed": "https://jobs.lever.co/",
+      "pages_seen": 1,
+      "candidate_urls_found": 0,
+      "jobs_discovered": 0,
+      "anti_bot_detected": true,
+      "request_success": true,
+      "status": "BLOCKED"
+    }
+  ]
+}
