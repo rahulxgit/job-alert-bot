@@ -41,7 +41,7 @@ stop early instead of always using its full query budget).
 """
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import requests
 
 import config
@@ -135,12 +135,12 @@ def _guess_posting_date(text: str) -> str:
         return ""
 
     if _POSTED_TODAY_RE.search(text):
-        return datetime.utcnow().strftime("%Y-%m-%d")
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     m = _RELATIVE_POSTED_RE.search(text)
     if m:
         amount, unit = int(m.group(1)), m.group(2).lower()
-        approx_date = datetime.utcnow() - _UNIT_TO_TIMEDELTA[unit](amount)
+        approx_date = datetime.now(timezone.utc) - _UNIT_TO_TIMEDELTA[unit](amount)
         return f"{approx_date.strftime('%Y-%m-%d')} (approx, from 'posted {amount} {unit}(s) ago')"
 
     m = _ISO_DATE_RE.search(text)

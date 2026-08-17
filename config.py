@@ -120,7 +120,9 @@ CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED = os.environ.get("CRAWL4AI_DISCOVERY_HEAL
 CRAWL4AI_DISCOVERY_HEALTHCHECK_URL = os.environ.get("CRAWL4AI_DISCOVERY_HEALTHCHECK_URL", "https://example.com/")
 
 # --- Canonical master profile -----------------------------------------------
-PROFILE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "rahul-master-profile.json")
+# Normalized to forward slashes so path checks/logging are stable across
+# Windows dev machines and the Linux CI runner.
+PROFILE_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "rahul-master-profile.json").replace("\\", "/")
 
 # --- YouTube -----------------------------------------------------------------
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")

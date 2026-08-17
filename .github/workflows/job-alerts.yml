@@ -115,7 +115,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ai-checkpoint
-          path: run-artifacts/ai-progress.json
+          # ai-state.json is the authoritative per-job evaluation state
+          # (evaluator._legacy_state_store()); ai-progress.json alone is
+          # only a lightweight legacy summary. Without ai-state.json here,
+          # a same-day resumed/re-triggered run cannot skip candidates it
+          # already evaluated and re-spends AI budget on them.
+          path: |
+            run-artifacts/ai-progress.json
+            run-artifacts/ai-state.json
           if-no-files-found: ignore
           retention-days: 14
 
