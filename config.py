@@ -74,29 +74,45 @@ CRAWL_PROVIDER = os.environ.get("CRAWL_PROVIDER", "auto").lower()
 CRAWL4AI_TIMEOUT = int(os.environ.get("CRAWL4AI_TIMEOUT", "30"))
 CRAWL4AI_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_MAX_DETAIL_PAGES", "25"))
 CRAWL4AI_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_MIN_DESCRIPTION_CHARS", "300"))
-CRAWL4AI_DISCOVERY_ENABLED = os.environ.get("CRAWL4AI_DISCOVERY_ENABLED", "false").lower() == "true"
-CRAWL4AI_DISCOVERY_TIMEOUT = int(os.environ.get("CRAWL4AI_DISCOVERY_TIMEOUT", "20"))
-CRAWL4AI_DISCOVERY_MAX_SEEDS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_SEEDS", "12"))
-CRAWL4AI_DISCOVERY_MAX_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_PAGES", "40"))
+CRAWL4AI_DISCOVERY_ENABLED = os.environ.get("CRAWL4AI_DISCOVERY_ENABLED", "true").lower() == "true"
+CRAWL4AI_DISCOVERY_TIMEOUT = int(os.environ.get("CRAWL4AI_DISCOVERY_TIMEOUT", "30"))
+CRAWL4AI_DISCOVERY_MAX_SEEDS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_SEEDS", "20"))
+CRAWL4AI_DISCOVERY_MAX_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_PAGES", "100"))
 CRAWL4AI_DISCOVERY_MAX_DEPTH = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DEPTH", "2"))
-CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES", "12"))
+CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES", "1000"))
 CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS", "250"))
 CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS", "6000"))
 CRAWL4AI_DISCOVERY_LOCATIONS = COMMON_LOCATIONS
 CRAWL4AI_DISCOVERY_SEED_URLS = [
-    "https://boards.greenhouse.io/", "https://jobs.lever.co/", "https://jobs.ashbyhq.com/",
-    "https://www.naukri.com/", "https://internshala.com/jobs/", "https://wellfound.com/jobs",
-    "https://www.linkedin.com/jobs/", "https://www.indeed.com/jobs", "https://www.ycombinator.com/jobs",
-    "https://cutshort.io/jobs", "https://www.instahyre.com/", "https://www.hiringcafe.com/",
+    "https://internshala.com/jobs/software-engineering-jobs/",
+    "https://www.ycombinator.com/jobs/role/software-engineer",
+    "https://wellfound.com/jobs",
+    "https://in.indeed.com/jobs?q=Software+Engineer&l=India",
+    "https://www.glassdoor.co.in/Job/india-software-engineer-jobs-SRCH_IL.0,5_IN115_KO6,23.htm",
+    "https://www.simplyhired.co.in/search?q=Software+Engineer",
+    "https://cutshort.io/jobs/software-engineer-jobs",
+    "https://www.naukri.com/software-engineer-jobs-in-india",
+    "https://www.foundit.in/srp/results?query=Software+Engineer",
+    "https://www.hirist.tech/search/software-engineer",
+    "https://weworkremotely.com/categories/remote-full-stack-programming-jobs",
+    "https://remoteok.com/remote-software-engineer-jobs",
+    "https://arc.dev/remote-jobs/software-engineer",
+    "https://www.instahyre.com/search-jobs/",
+    "https://hasjob.co/",
+    "https://hiringcafe.com/",
+    "https://jobs.lever.co/",
+    "https://boards.greenhouse.io/",
 ]
 CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS = [
-    "boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "naukri.com", "www.naukri.com",
-    "internshala.com", "www.internshala.com", "wellfound.com", "www.wellfound.com",
-    "linkedin.com", "www.linkedin.com", "indeed.com", "www.indeed.com",
-    "ycombinator.com", "www.ycombinator.com", "cutshort.io", "www.cutshort.io",
-    "instahyre.com", "www.instahyre.com", "hiringcafe.com", "www.hiringcafe.com",
+    "internshala.com", "www.internshala.com", "ycombinator.com", "www.ycombinator.com",
+    "wellfound.com", "www.wellfound.com", "in.indeed.com", "indeed.com", "www.indeed.com",
+    "glassdoor.co.in", "www.glassdoor.co.in", "simplyhired.co.in", "www.simplyhired.co.in",
+    "cutshort.io", "www.cutshort.io", "naukri.com", "www.naukri.com", "foundit.in", "www.foundit.in",
+    "hirist.tech", "www.hirist.tech", "weworkremotely.com", "remoteok.com", "arc.dev",
+    "instahyre.com", "www.instahyre.com", "hasjob.co", "hiringcafe.com", "www.hiringcafe.com",
+    "boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "linkedin.com", "www.linkedin.com"
 ]
-CRAWL4AI_DISCOVERY_SEED_CONCURRENCY = int(os.environ.get("CRAWL4AI_DISCOVERY_SEED_CONCURRENCY", "3"))
+CRAWL4AI_DISCOVERY_SEED_CONCURRENCY = int(os.environ.get("CRAWL4AI_DISCOVERY_SEED_CONCURRENCY", "4"))
 CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED = os.environ.get("CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED", "true").lower() == "true"
 CRAWL4AI_DISCOVERY_HEALTHCHECK_URL = os.environ.get("CRAWL4AI_DISCOVERY_HEALTHCHECK_URL", "https://example.com/")
 
