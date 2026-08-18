@@ -276,8 +276,13 @@ def run_pipeline(dry_run: bool = False):
             log.info("Dry run: email not sent.")
         return
 
-    sheet = get_sheet()
-    seen_urls = get_seen_urls(sheet)
+    if dry_run:
+        seen_urls = []
+        log.info("Dry run: skipping Google Sheets seen_urls check.")
+    else:
+        sheet = get_sheet()
+        seen_urls = get_seen_urls(sheet)
+        
     unseen = [l for l in shortlist if l.job_url not in seen_urls]
     log.info(f"{len(unseen)} of those are new (not already logged)")
     _export("new-unseen-listings", unseen, seen_count=len(seen_urls))
@@ -332,7 +337,10 @@ def run_pipeline(dry_run: bool = False):
                 seen_dedup.add(l.job_url)
                 deduped.append(l)
         reviewed = deduped
-    latest_seen = get_seen_urls(sheet)
+    if dry_run:
+        latest_seen = []
+    else:
+        latest_seen = get_seen_urls(sheet)
     reviewed = [l for l in reviewed if l.job_url not in latest_seen]
 
     log.info("Looking for recruiter/company emails on the final shortlist...")

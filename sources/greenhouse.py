@@ -43,13 +43,19 @@ class GreenhouseSource(JobSource):
                 except requests.exceptions.HTTPError as exc:
                     status = exc.response.status_code if exc.response is not None else None
                     if status == 404:
-                        consecutive_404s += 1
                         log.warning(
-                            "fetch failed for '%s' (token '%s'): 404 Not Found, consecutive=%s/%s",
-                            company_name, token, consecutive_404s, breaker_threshold,
+                            "fetch failed for '%s' (token '%s'): 404 Not Found",
+                            company_name, token
                         )
                         break
-                    elif status in (429, 500, 502, 503, 504) and attempt < 2:
+                    elif status in (403, 429):
+                        consecutive_404s += 1
+                        log.warning(
+                            "fetch failed for '%s' (token '%s'): %s, consecutive=%s/%s",
+                            company_name, token, status, consecutive_404s, breaker_threshold,
+                        )
+                        break
+                    elif status in (500, 502, 503, 504) and attempt < 2:
                         time.sleep(2 ** attempt)
                         continue
                     else:
