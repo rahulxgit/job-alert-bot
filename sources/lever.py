@@ -28,30 +28,43 @@ class LeverSource(JobSource):
                     consecutive_404s,
                 )
                 break
-            try:
-                resp = requests.get(
-                    f"https://api.lever.co/v0/postings/{token}",
-                    params={"mode": "json"},
-                    timeout=15,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                consecutive_404s = 0
-            except requests.exceptions.HTTPError as exc:
-                status = exc.response.status_code if exc.response is not None else None
-                if status == 404:
-                    consecutive_404s += 1
-                    log.warning(
-                        "fetch failed for '%s' (token '%s'): 404 Not Found, consecutive=%s/%s",
-                        company_name, token, consecutive_404s, breaker_threshold,
+            data = None
+            for attempt in range(3):
+                try:
+                    resp = requests.get(
+                        f"https://api.lever.co/v0/postings/{token}",
+                        params={"mode": "json"},
+                        timeout=15,
                     )
-                else:
+                    resp.raise_for_status()
+                    data = resp.json()
+                    consecutive_404s = 0
+                    break
+                except requests.exceptions.HTTPError as exc:
+                    status = exc.response.status_code if exc.response is not None else None
+                    if status == 404:
+                        consecutive_404s += 1
+                        log.warning(
+                            "fetch failed for '%s' (token '%s'): 404 Not Found, consecutive=%s/%s",
+                            company_name, token, consecutive_404s, breaker_threshold,
+                        )
+                        break
+                    elif status in (429, 500, 502, 503, 504) and attempt < 2:
+                        time.sleep(2 ** attempt)
+                        continue
+                    else:
+                        consecutive_404s = 0
+                        log.warning("fetch failed for '%s' (token '%s'): %s", company_name, token, exc)
+                        break
+                except Exception as exc:
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)
+                        continue
                     consecutive_404s = 0
                     log.warning("fetch failed for '%s' (token '%s'): %s", company_name, token, exc)
-                continue
-            except Exception as exc:
-                consecutive_404s = 0
-                log.warning("fetch failed for '%s' (token '%s'): %s", company_name, token, exc)
+                    break
+            
+            if not data:
                 continue
 
             for job in data:

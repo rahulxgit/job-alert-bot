@@ -16,6 +16,10 @@ try:
 except ImportError:  # pragma: no cover - non-POSIX fallback
     fcntl = None
 
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 STATE_PATH = Path("run-artifacts/ai-state.json")
 STATE_META_VERSION = 2
@@ -42,10 +46,23 @@ class AIStateStore:
         try:
             if fcntl is not None:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            elif msvcrt is not None:
+                import os
+                handle.seek(0)
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                except OSError:
+                    pass
             yield
         finally:
             if fcntl is not None:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            elif msvcrt is not None:
+                handle.seek(0)
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass
             handle.close()
 
     def _completed_previous_run(self) -> bool:

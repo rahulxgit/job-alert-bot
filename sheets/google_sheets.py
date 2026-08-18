@@ -22,10 +22,40 @@ def get_sheet():
     return client.open_by_key(config.GOOGLE_SHEET_ID).sheet1
 
 
-def get_seen_urls(sheet) -> set:
-    urls = sheet.col_values(1)
-    return set(urls[1:])
+import pathlib
 
+SEEN_CACHE = pathlib.Path("run-artifacts/sheets-seen-cache.json")
+PENDING_QUEUE = pathlib.Path("run-artifacts/sheets-pending-queue.json")
+
+def get_seen_urls(sheet) -> set:
+    try:
+        urls = sheet.col_values(1)
+        seen = set(urls[1:])
+        SEEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        SEEN_CACHE.write_text(json.dumps(list(seen), ensure_ascii=False))
+        return seen
+    except Exception as exc:
+        log.warning("Google Sheets API failed during get_seen_urls: %s", exc)
+        if SEEN_CACHE.exists():
+            log.info("Falling back to local seen_urls cache.")
+            try:
+                return set(json.loads(SEEN_CACHE.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+        log.warning("No local cache available. Returning empty set.")
+        return set()
+
+def _load_pending_queue() -> list[list]:
+    if not PENDING_QUEUE.exists():
+        return []
+    try:
+        return json.loads(PENDING_QUEUE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+def _save_pending_queue(rows: list[list]):
+    PENDING_QUEUE.parent.mkdir(parents=True, exist_ok=True)
+    PENDING_QUEUE.write_text(json.dumps(rows, ensure_ascii=False))
 
 def _sheet_value(value: Any) -> str | int | float:
     """Convert arbitrary Python values into Google Sheets scalar values."""
@@ -40,7 +70,6 @@ def _sheet_value(value: Any) -> str | int | float:
     if isinstance(value, dict):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     return str(value)
-
 
 def _listing_to_sheet_row(listing: JobListing) -> list[str | int | float]:
     return [
@@ -63,12 +92,16 @@ def _listing_to_sheet_row(listing: JobListing) -> list[str | int | float]:
         _sheet_value(listing.source or "Unknown"),
     ]
 
-
 def log_new_jobs(sheet, listings: list[JobListing]):
     if not listings:
         return
 
     rows = [_listing_to_sheet_row(listing) for listing in listings]
+    pending = _load_pending_queue()
+    if pending:
+        rows = pending + rows
+        log.info("Including %s pending rows from previous failed syncs.", len(pending))
+
     invalid = [
         (index, value)
         for index, row in enumerate(rows)
@@ -79,4 +112,10 @@ def log_new_jobs(sheet, listings: list[JobListing]):
         raise TypeError(f"non-scalar Google Sheets value at row {invalid[0][0]}: {invalid[0][1]!r}")
 
     log.info("Writing %s normalized job rows to Google Sheets", len(rows))
-    sheet.append_rows(rows, value_input_option="USER_ENTERED")
+    try:
+        sheet.append_rows(rows, value_input_option="USER_ENTERED")
+        if PENDING_QUEUE.exists():
+            PENDING_QUEUE.unlink()
+    except Exception as exc:
+        log.warning("Google Sheets API failed during append_rows: %s. Saving to pending queue.", exc)
+        _save_pending_queue(rows)

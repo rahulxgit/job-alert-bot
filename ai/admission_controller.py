@@ -141,7 +141,7 @@ def admit_candidates(listings: list[Any], limit: int | None = None) -> tuple[lis
         "input_count": len(listings),
         "admitted_count": len(admitted),
         "deferred_count": len(deferred),
-        "deferred_jobs": [job.to_dict() for job in deferred],
+        "deferred_jobs": [job.to_dict() if hasattr(job, "to_dict") else job for job in deferred],
     }
     DEFERRED_ARTIFACT.parent.mkdir(parents=True, exist_ok=True)
     DEFERRED_ARTIFACT.write_text(
@@ -149,6 +149,18 @@ def admit_candidates(listings: list[Any], limit: int | None = None) -> tuple[lis
         encoding="utf-8",
     )
     return admitted, deferred
+
+
+def load_deferred_candidates() -> list[Any]:
+    if not DEFERRED_ARTIFACT.exists():
+        return []
+    try:
+        payload = json.loads(DEFERRED_ARTIFACT.read_text(encoding="utf-8"))
+        jobs = payload.get("deferred_jobs", [])
+        from models import JobListing
+        return [JobListing(**job) for job in jobs if isinstance(job, dict)]
+    except Exception:
+        return []
 
 
 if __name__ == "__main__":

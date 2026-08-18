@@ -215,7 +215,8 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     role_hits = _contains_any(title, config.ROLE_MATCH_TERMS)
     description_role_hits = _contains_any(description, config.ROLE_MATCH_TERMS)
     core_tech_hits = _contains_any(full_text, config.CORE_TECH_TERMS)
-    if not role_hits and len(core_tech_hits) < 2:
+    
+    if not role_hits and len(core_tech_hits) < 1:
         return 0
 
     location_points, location_hard_mismatch = _location_score(location)

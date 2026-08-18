@@ -48,9 +48,9 @@ _DEFAULT_DISCOVERY_DOMAINS = [
 ]
 
 _ANTI_BOT_SIGNALS = (
-    "checking your browser", "just a moment", "attention required",
-    "cloudflare", "captcha", "access denied", "are you a robot",
-    "please verify you are a human", "enable javascript and cookies",
+    "checking your browser before accessing", "just a moment...", "attention required!",
+    "please verify you are a human", "enable javascript and cookies to continue",
+    "are you a robot?", "access denied - error code",
 )
 
 
@@ -117,26 +117,40 @@ def _allowed_host(url: str) -> bool:
     return host in allowed
 
 
-def _looks_job_url(url: str, title: str = "") -> bool:
+def _looks_job_url(url: str, title: str = "", text_signal: str = "") -> bool:
     normalized = _normalize_url(url)
     if not normalized or not _allowed_host(normalized):
         return False
     low = normalized.lower()
     title_low = (title or "").lower()
+    text_low = (text_signal or "").lower()
+    
     if any(marker in low for marker in _AGGREGATE_MARKERS):
         return False
+        
     job_url_patterns = (
         r"/job-listings-[^/?]+", r"/job/[^/?]+", r"/jobs/[^/?]+", r"/jobs/view/[^/?]+",
         r"/vacancy/[^/?]+", r"/position/[^/?]+", r"/internship/[^/?]+", r"/viewjob(?:[/?]|$)",
+        r"/careers/[^/?]+", r"/opportunities/[^/?]+"
     )
     if any(re.search(pattern, low) for pattern in job_url_patterns):
         return True
+        
     job_title_signal = any(token in title_low for token in (
         "software engineer", "developer", "sde", "frontend", "backend", "full stack",
-        "product engineer", "ai engineer", "ml engineer", "genai", "intern",
+        "product engineer", "ai engineer", "ml engineer", "genai", "intern", "programmer", "engineer"
     ))
+    
+    job_text_signal = any(token in text_low for token in (
+        "apply now", "view details", "software engineer", "developer", "sde"
+    ))
+    
     path_segments = [part for part in urlparse(normalized).path.strip("/").split("/") if part]
-    return bool(job_title_signal and len(path_segments) >= 2)
+    
+    if (job_title_signal or job_text_signal) and len(path_segments) >= 1:
+        return True
+        
+    return False
 
 
 def _extract_links(markdown: str, base_url: str) -> list[str]:
@@ -218,7 +232,7 @@ def _to_listing(url: str, markdown: str, seed_title: str = "") -> JobListing:
 
 def _strategy() -> BestFirstCrawlingStrategy:
     allowed = [d.lower().removeprefix("www.") for d in _discovery_domains()]
-    patterns = [f"https://{re.escape(domain)}/*" for domain in allowed] + [f"https://www.{re.escape(domain)}/*" for domain in allowed]
+    patterns = [f"https://{domain}/*" for domain in allowed] + [f"https://www.{domain}/*" for domain in allowed]
     filter_chain = FilterChain([URLPatternFilter(patterns=patterns)])
     scorer = KeywordRelevanceScorer(
         keywords=[
@@ -237,26 +251,36 @@ def _strategy() -> BestFirstCrawlingStrategy:
     )
 
 
-def _extract_result_markdown(result) -> tuple[str, str, str]:
+def _extract_result_markdown(result) -> tuple[str, str, str, list]:
     url = _normalize_url(getattr(result, "url", "") or "")
     markdown_obj = getattr(result, "markdown", "") or ""
     markdown = getattr(markdown_obj, "raw_markdown", markdown_obj)
     markdown = str(markdown).strip()
     metadata = getattr(result, "metadata", {}) or {}
     title = str(metadata.get("title") or "") if isinstance(metadata, dict) else ""
-    return url, markdown, title
+    
+    extracted_links = []
+    for match in re.finditer(r"\[([^\]]+)\]\(([^)]+)\)", markdown):
+        text = match.group(1).strip()
+        link = match.group(2).strip()
+        if link.startswith(("http://", "https://")):
+            extracted_links.append({"href": link, "text": text})
+        else:
+            extracted_links.append({"href": urljoin(url, link), "text": text})
+            
+    result_links = getattr(result, "links", {})
+    if isinstance(result_links, dict):
+        for key in ["internal", "external"]:
+            for link_obj in result_links.get(key, []):
+                href = link_obj.get("href")
+                text = link_obj.get("text")
+                if href:
+                    extracted_links.append({"href": href, "text": text})
+                    
+    return url, markdown, title, extracted_links
 
 
 async def _crawl_seed(crawler, seed: str, run_config) -> tuple[str, list[JobListing], int, bool, int, bool]:
-    """Returns (seed, discovered_listings, pages_seen, request_success,
-    candidate_urls_found, anti_bot_detected).
-
-    request_success only means the page fetch/render didn't raise — it says
-    nothing about whether anything useful was extracted. candidate_urls_found
-    counts URLs on-domain that look like job-detail links (before the stricter
-    job-text content check), so a seed that renders fine but yields zero
-    candidates can be told apart from one that genuinely has no matches.
-    """
     discovered: list[JobListing] = []
     pages_seen = 0
     candidate_urls_found = 0
@@ -265,16 +289,24 @@ async def _crawl_seed(crawler, seed: str, run_config) -> tuple[str, list[JobList
         results = await crawler.arun(url=seed, config=run_config)
         async for result in results:
             pages_seen += 1
-            url, markdown, title = _extract_result_markdown(result)
+            url, markdown, title, extracted_links = _extract_result_markdown(result)
             if not url or not _allowed_host(url):
                 continue
             if _looks_like_anti_bot(markdown):
                 anti_bot_detected = True
                 continue
+                
             if _looks_job_url(url, title):
                 candidate_urls_found += 1
                 if _looks_like_job_text(markdown):
                     discovered.append(_to_listing(url, markdown, title))
+            
+            for link_obj in extracted_links:
+                href = _normalize_url(link_obj["href"])
+                text = link_obj["text"]
+                if href and _allowed_host(href) and _looks_job_url(href, title=text, text_signal=text):
+                    candidate_urls_found += 1
+                    
         return seed, discovered, pages_seen, True, candidate_urls_found, anti_bot_detected
     except Exception as exc:
         log.warning("[Crawl4AI] Discovery failed for seed %s: %s", seed, exc)

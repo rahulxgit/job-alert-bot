@@ -56,54 +56,67 @@ ALL_SOURCES = [
 
 def fetch_all() -> tuple[list[JobListing], dict[str, int], dict[str, SourceHealth]]:
     """Run every source independently and record health/coverage metrics."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     all_listings: list[JobListing] = []
     source_counts: dict[str, int] = {}
     source_health: dict[str, SourceHealth] = {}
-
+    
     for source in ALL_SOURCES:
-        health = SourceHealth(name=source.name, started_at=utc_now())
-        source_health[source.name] = health
+        source_health[source.name] = SourceHealth(name=source.name, started_at=utc_now())
+
+    def run_source(source):
+        health = source_health[source.name]
         source_started = time.monotonic()
         try:
             listings = source.fetch_listings()
             if listings is None:
                 listings = []
             health.jobs_found = len(listings)
+            return source.name, listings, None, time.monotonic() - source_started
         except Exception as exc:
-            classification = classify_exception(exc)
-            health.errors.append(str(exc))
-            health.error_classification = classification
-            health.http_api_failures = int(classification.startswith("HTTP_"))
-            listings = []
-            log.warning(
-                "%s raised unexpectedly: classification=%s error=%s",
-                source.name,
-                classification,
-                exc,
+            return source.name, [], exc, time.monotonic() - source_started
+
+    with ThreadPoolExecutor(max_workers=len(ALL_SOURCES)) as executor:
+        futures = {executor.submit(run_source, source): source for source in ALL_SOURCES}
+        for future in as_completed(futures):
+            source = futures[future]
+            health = source_health[source.name]
+            try:
+                name, listings, exc, duration = future.result()
+                if exc:
+                    classification = classify_exception(exc)
+                    health.errors.append(str(exc))
+                    health.error_classification = classification
+                    health.http_api_failures = int(classification.startswith("HTTP_"))
+                    log.warning("%s raised unexpectedly: classification=%s error=%s", name, classification, exc)
+            except Exception as exc:
+                name, listings = source.name, []
+                duration = 0.0
+                health.errors.append(str(exc))
+                health.error_classification = classify_exception(exc)
+
+            health.duration_seconds = max(0.0, duration)
+            health.finished_at = datetime.now(timezone.utc).isoformat()
+            if health.errors:
+                if health.error_classification == "HTTP_429":
+                    health.status = "RATE_LIMITED"
+                elif health.error_classification == "HTTP_403":
+                    health.status = "BLOCKED"
+                else:
+                    health.status = "FAILED" if not listings else "DEGRADED"
+            elif not listings:
+                health.status = "NO_RESULTS"
+            else:
+                health.status = "HEALTHY"
+
+            source_counts[name] = len(listings)
+            health.jobs_found = len(listings)
+            health.urls_discovered = len(listings)
+            all_listings.extend(listings)
+            log.info(
+                "%s: %s listings | status=%s | duration=%.2fs | error=%s",
+                name, len(listings), health.status, health.duration_seconds, health.error_classification or "none",
             )
-
-        health.duration_seconds = max(0.0, time.monotonic() - source_started)
-        health.finished_at = datetime.now(timezone.utc).isoformat()
-        if health.errors:
-            health.status = "FAILED" if not listings else "DEGRADED"
-        elif not listings:
-            health.status = "HEALTHY"
-            health.error_classification = "NO_RESULTS"
-        else:
-            health.status = "HEALTHY"
-
-        source_counts[source.name] = len(listings)
-        health.jobs_found = len(listings)
-        health.urls_discovered = len(listings)
-        all_listings.extend(listings)
-        log.info(
-            "%s: %s listings | status=%s | duration=%.2fs | error=%s",
-            source.name,
-            len(listings),
-            health.status,
-            health.duration_seconds,
-            health.error_classification or "none",
-        )
 
     zero_sources = [name for name, health in source_health.items() if health.enabled and health.jobs_found == 0]
     failed_sources = [name for name, health in source_health.items() if health.status == "FAILED"]
@@ -280,6 +293,9 @@ def run_pipeline(dry_run: bool = False):
             log.info("Dry run: email not sent.")
         return
 
+    from ai.admission_controller import load_deferred_candidates
+    previously_deferred = [l for l in load_deferred_candidates() if l.job_url not in seen_urls]
+    unseen = previously_deferred + [l for l in unseen if l.job_url not in {d.job_url for d in previously_deferred}]
     admitted, deferred = admit_candidates(unseen)
     log.info(
         "AI admission control: %s admitted / %s unseen; %s deferred",
@@ -293,6 +309,15 @@ def run_pipeline(dry_run: bool = False):
         admission_limit=os.environ.get("AI_ADMISSION_LIMIT", "unset"),
         deferred_count=len(deferred),
     )
+
+    if admitted:
+        try:
+            import requests
+            log.info("Warming up AI Gateway (may take 90s on cold start)...")
+            requests.get(config.AI_GATEWAY_URL, timeout=90)
+            log.info("AI Gateway warmed up.")
+        except Exception as exc:
+            log.warning("AI Gateway warmup failed or timed out: %s", exc)
 
     reviewed = review_candidates(admitted)
     log.info(f"{len(reviewed)} passed AI fit review (score >= {config.LLM_FIT_THRESHOLD})")

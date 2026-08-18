@@ -81,14 +81,9 @@ def parse_json_object(text: str) -> dict[str, Any]:
     if not isinstance(text, str) or not text.strip():
         raise ValueError("empty LLM response")
 
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        lines = cleaned.splitlines()
-        if lines and lines[0].strip().lower() in {"```", "```json"}:
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        cleaned = "\n".join(lines).strip()
+    import re
+    cleaned = re.sub(r"^```(?:json)?\s*$", "", text, flags=re.MULTILINE)
+    cleaned = cleaned.strip()
 
     try:
         parsed = json.loads(cleaned)
