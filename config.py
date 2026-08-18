@@ -5,33 +5,22 @@ to read and safe to import from anywhere without side effects.
 """
 import os
 
-# --- jobspy (LinkedIn/Google) ------------------------------------------------
-SEARCH_TERMS = [
-    "SDE 1", "Software Development Engineer", "Software Engineer",
-    "Full Stack Developer", "Full Stack Engineer", "Backend Developer",
-    "MERN Stack Developer", "Frontend Developer", "Frontend Engineer",
-    "React Developer", "Next.js Developer", "Java Developer",
-    "Node.js Developer", "Web Developer", "Java Full Stack Developer",
-    "Associate Software Engineer", "Graduate Software Engineer",
-    "Junior Software Engineer", "Junior Full Stack Developer",
-    "Entry Level Software Engineer", "Product Engineer", "Application Developer",
-]
-LOCATIONS = ["Bengaluru, India", "India"]
+# --- Common Search Parameters ---
+COMMON_SEARCH_TERMS = ["Software Engineer"]
+COMMON_LOCATIONS = ["Pune", "Bengaluru", "India", "PAN India"]
+
+# --- jobspy (LinkedIn/Google) ---
+SEARCH_TERMS = COMMON_SEARCH_TERMS
+LOCATIONS = COMMON_LOCATIONS
 JOBSPY_SITES = ["linkedin", "google"]
 RESULTS_PER_SITE = int(os.environ.get("JOBSPY_RESULTS_PER_SITE", "15"))
 HOURS_OLD = 24
 JOBSPY_CALL_TIMEOUT_SECONDS = int(os.environ.get("JOBSPY_CALL_TIMEOUT_SECONDS", "60"))
 JOBSPY_MAX_COMBINATIONS = int(os.environ.get("JOBSPY_MAX_COMBINATIONS", "24"))
 
-INTERNSHALA_SEARCH_TERMS = [
-    "full-stack-development", "software-development", "web-development",
-    "react-js-development", "java-development", "node-js-development",
-]
-NAUKRI_SEARCH_TERMS = [
-    "sde 1", "software developer fresher", "full stack developer fresher",
-    "react developer fresher", "java developer fresher", "node js developer fresher",
-]
-WELLFOUND_ROLE_SLUGS = ["software-engineer", "full-stack-engineer", "backend-engineer"]
+INTERNSHALA_SEARCH_TERMS = COMMON_SEARCH_TERMS
+NAUKRI_SEARCH_TERMS = COMMON_SEARCH_TERMS
+WELLFOUND_ROLE_SLUGS = [term.lower().replace(' ', '-') for term in COMMON_SEARCH_TERMS]
 GREENHOUSE_BOARDS = {
     "postman": "postman", "razorpay": "razorpay", "browserstack": "browserstack",
     "freshworks": "freshworks", "cred": "cred", "meesho": "meesho", "groww": "groww",
@@ -49,8 +38,8 @@ LEVER_BOARDS = {
     "attentive": "attentive", "loom": "loom", "ramp": "ramp", "vanta": "vanta",
     "mixpanel": "mixpanel", "amplitude": "amplitude", "netlify": "netlify", "plaid": "plaid",
 }
-ARBEITNOW_KEYWORDS = ["react", "node", "full stack", "frontend", "backend", "javascript", "typescript", "software engineer", "junior", "graduate"]
-REMOTEOK_KEYWORDS = ["react", "node", "full stack", "frontend", "backend", "javascript", "typescript", "junior", "entry level", "software engineer"]
+ARBEITNOW_KEYWORDS = COMMON_SEARCH_TERMS
+REMOTEOK_KEYWORDS = COMMON_SEARCH_TERMS
 
 # --- Firecrawl ---------------------------------------------------------------
 FIRECRAWL_API_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
@@ -61,16 +50,8 @@ FIRECRAWL_TIMEOUT = int(os.environ.get("FIRECRAWL_TIMEOUT", "30"))
 FIRECRAWL_MAX_AGGREGATE_EXPANSIONS = int(os.environ.get("FIRECRAWL_MAX_AGGREGATE_EXPANSIONS", "10"))
 FIRECRAWL_MAX_LINKS_PER_AGGREGATE = int(os.environ.get("FIRECRAWL_MAX_LINKS_PER_AGGREGATE", "5"))
 FIRECRAWL_MAX_DETAIL_PAGES = int(os.environ.get("FIRECRAWL_MAX_DETAIL_PAGES", "50"))
-FIRECRAWL_ROLE_TERMS = [
-    "SDE", "SDE-1", "Software Engineer", "Software Developer", "Full Stack Engineer",
-    "Full Stack Developer", "Frontend Engineer", "React Developer", "React.js Developer",
-    "Next.js Developer", "Node.js Developer", "Backend Engineer", "Backend Developer",
-    "AI Engineer", "AI/ML Engineer", "GenAI Engineer", "LLM Engineer", "Applied AI Engineer",
-    "AI Software Engineer", "Product Engineer", "Associate Software Engineer",
-    "Graduate Software Engineer", "Junior Software Engineer", "New Grad Engineer",
-    "Graduate Engineer Trainee",
-]
-FIRECRAWL_LOCATIONS = ["Bengaluru", "Bangalore", "Pune", "Hyderabad", "Gurugram", "Gurgaon", "Noida", "Delhi NCR", "Mumbai", "Chennai", "Kolkata", "Ahmedabad", "Remote", "India"]
+FIRECRAWL_ROLE_TERMS = COMMON_SEARCH_TERMS
+FIRECRAWL_LOCATIONS = COMMON_LOCATIONS
 FIRECRAWL_EXPERIENCE_TERMS = ["fresher", "new grad", "graduate", "0-1 years", "0-2 years", "entry level", "junior", "associate", "early career"]
 _role_location_combos = [(role, location) for location in FIRECRAWL_LOCATIONS for role in FIRECRAWL_ROLE_TERMS]
 FIRECRAWL_TECH_COMBOS = ["React + Node", "React + TypeScript", "Next.js + Node", "MERN", "JavaScript + React", "TypeScript + React", "LLM + Python", "LLM + JavaScript", "AI + React", "AI + Node", "RAG", "MCP", "generative AI", "AI agents"]
@@ -101,7 +82,7 @@ CRAWL4AI_DISCOVERY_MAX_DEPTH = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DEPTH"
 CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES", "12"))
 CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MIN_DESCRIPTION_CHARS", "250"))
 CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS", "6000"))
-CRAWL4AI_DISCOVERY_LOCATIONS = ["Bengaluru", "Bangalore", "Pune", "Hyderabad", "Gurugram", "Gurgaon", "Noida", "Delhi NCR", "Mumbai", "Chennai", "Kolkata", "Ahmedabad", "Remote", "India"]
+CRAWL4AI_DISCOVERY_LOCATIONS = COMMON_LOCATIONS
 CRAWL4AI_DISCOVERY_SEED_URLS = [
     "https://boards.greenhouse.io/", "https://jobs.lever.co/", "https://jobs.ashbyhq.com/",
     "https://www.naukri.com/", "https://internshala.com/jobs/", "https://wellfound.com/jobs",
@@ -137,7 +118,7 @@ YOUTUBE_VIDEO_MAX_AGE_HOURS = 48
 
 # --- LinkedIn recruiter posts ------------------------------------------------
 LINKEDIN_LI_AT_COOKIE = os.environ.get("LINKEDIN_LI_AT_COOKIE", "")
-LINKEDIN_POST_SEARCH_TERMS = ["hiring software engineer fresher", "hiring sde 1", "hiring full stack developer"]
+LINKEDIN_POST_SEARCH_TERMS = COMMON_SEARCH_TERMS
 
 # --- Matching / scoring -----------------------------------------------------
 PROFILE_KEYWORDS = [
@@ -176,7 +157,7 @@ CORE_TECH_TERMS = [
     "css", "sql", "postgresql", "mysql", "supabase", "firebase", "redux", "react query", "tailwindcss",
     "docker", "git", "github",
 ]
-PREFERRED_LOCATIONS = ["bengaluru", "bangalore", "pune", "hyderabad", "gurgaon", "gurugram", "noida", "delhi ncr", "mumbai", "chennai", "india", "remote", "work from home", "wfh"]
+PREFERRED_LOCATIONS = COMMON_LOCATIONS
 NON_PREFERRED_LOCATION_SIGNALS = ["united states", "usa", "canada", "uk", "united kingdom", "australia", "germany", "france", "singapore", "dubai", "uae", "europe"]
 EDUCATION_HARD_EXCLUSION_SIGNALS = [
     "b.tech in computer science only", "b.e. in computer science only", "b.e./b.tech in computer science only",
