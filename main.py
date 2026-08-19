@@ -324,7 +324,11 @@ def run_pipeline(dry_run: bool = False):
         except Exception as exc:
             log.warning("AI Gateway warmup failed or timed out: %s", exc)
 
-    reviewed = review_candidates(admitted)
+    budget_seconds = max(1, int(getattr(config, "LLM_EVALUATION_BUDGET_SECONDS", 2700)))
+    # The budget should start from the script's execution, not when AI starts,
+    # to prevent the overall GitHub Action from hitting its hard timeout.
+    global_deadline = search_started + budget_seconds
+    reviewed = review_candidates(admitted, deadline=global_deadline)
     log.info(f"{len(reviewed)} passed AI fit review (score >= {config.LLM_FIT_THRESHOLD})")
     log.info(f"  by source: {_source_breakdown(reviewed)}")
     _export("ai-reviewed", reviewed, threshold=config.LLM_FIT_THRESHOLD, admitted_count=len(admitted), deferred_count=len(deferred))
