@@ -13,10 +13,10 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: "pip"
@@ -25,7 +25,7 @@ jobs:
         run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Cache Crawl4AI browser binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cache/ms-playwright
@@ -35,6 +35,8 @@ jobs:
             crawl4ai-browsers-${{ runner.os }}-py311-
 
       - name: Install Crawl4AI browser
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: crawl4ai-setup
 
       - name: Crawl4AI health check

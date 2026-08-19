@@ -5,8 +5,8 @@
   "passed": 0,
   "rejected": 0,
   "retry_attempts": 0,
-  "average_latency_seconds": 0.098,
-  "p95_latency_seconds": 0.132,
+  "average_latency_seconds": 0.101,
+  "p95_latency_seconds": 0.13,
   "candidate_count": 4,
   "status": "deadline_exceeded"
 }

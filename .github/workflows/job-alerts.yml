@@ -18,10 +18,10 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: "pip"
@@ -56,7 +56,7 @@ jobs:
         run: python -m ai.admission_controller
 
       - name: Restore AI retry queue
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: failed-ai-jobs.json
           key: failed-ai-jobs-${{ github.run_id }}-${{ github.run_attempt }}
@@ -64,7 +64,7 @@ jobs:
             failed-ai-jobs-
 
       - name: Cache Crawl4AI browser binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cache/ms-playwright
@@ -74,6 +74,8 @@ jobs:
             crawl4ai-browsers-${{ runner.os }}-py311-
 
       - name: Install Crawl4AI browser
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: crawl4ai-setup
 
       - name: Run job search script
@@ -119,7 +121,7 @@ jobs:
 
       - name: Upload AI checkpoint
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ai-checkpoint
           # ai-state.json is the authoritative per-job evaluation state
@@ -135,7 +137,7 @@ jobs:
 
       - name: Upload job run artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: job-run-${{ github.run_id }}-${{ github.run_attempt }}
           path: run-artifacts/
