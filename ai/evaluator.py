@@ -425,16 +425,7 @@ def evaluate_listing(
     for attempt in range(1, AI_MAX_ATTEMPTS_PER_CANDIDATE + 1):
         if _deadline_reached(deadline):
             return None, True
-        if not _gateway_backoff.wait_if_needed(deadline):
-            return None, True
-        if _deadline_reached(deadline):
-            return None, True
-        gateway_verdict = _gateway.evaluate(prompt)
-        if gateway_verdict is not None:
-            _gateway_backoff.clear()
-            return gateway_verdict, False
 
-        log.warning("AI Gateway unavailable for '%s' on attempt %s; trying Gemini", listing.title, attempt)
         if not _gemini_backoff.wait_if_needed(deadline):
             return None, True
         if _deadline_reached(deadline):
@@ -444,8 +435,21 @@ def evaluate_listing(
             _gemini_backoff.clear()
             return gemini_verdict, False
 
+        log.warning("Gemini unavailable/rate-limited for '%s' on attempt %s; trying AI Gateway", listing.title, attempt)
+        
+        if not _gateway_backoff.wait_if_needed(deadline):
+            return None, True
+        if _deadline_reached(deadline):
+            return None, True
+        gateway_verdict = _gateway.evaluate(prompt)
+        if gateway_verdict is not None:
+            _gateway_backoff.clear()
+            return gateway_verdict, False
+
         reason = "Gemini rate limited" if gemini_verdict.hit_rate_limit else "both AI providers failed"
-        _gemini_backoff.activate(config.GEMINI_SHARED_BACKOFF_SECONDS)
+        if gemini_verdict.hit_rate_limit:
+            _gemini_backoff.activate(config.GEMINI_SHARED_BACKOFF_SECONDS)
+        
         log.warning("%s for '%s' on attempt %s/%s", reason, listing.title, attempt, AI_MAX_ATTEMPTS_PER_CANDIDATE)
         if attempt < AI_MAX_ATTEMPTS_PER_CANDIDATE and not _sleep_until(deadline, min(AI_MAX_RETRY_DELAY_SECONDS, delay)):
             return None, True
