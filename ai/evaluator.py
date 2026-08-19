@@ -12,6 +12,7 @@ from pathlib import Path
 import config
 from models import FitVerdict, JobListing
 from ai.gemini_provider import GeminiProvider
+from ai.groq_provider import GroqProvider
 from ai.gateway_provider import GatewayProvider
 from ai.profile import build_candidate_profile
 from ai.metrics import MetricsCoordinator
@@ -24,6 +25,7 @@ from utils.logging_setup import get_logger
 
 log = get_logger("evaluator")
 _gemini = GeminiProvider()
+_groq = GroqProvider()
 _gateway = GatewayProvider()
 _candidate_profile = None
 FAILED_AI_JOBS_PATH = Path("failed-ai-jobs.json")
@@ -33,6 +35,7 @@ AI_MAX_ATTEMPTS_PER_CANDIDATE = max(1, int(getattr(config, "AI_EVALUATION_MAX_AT
 AI_RETRY_DELAY_SECONDS = max(1.0, float(getattr(config, "AI_EVALUATION_RETRY_DELAY_SECONDS", 15)))
 AI_MAX_RETRY_DELAY_SECONDS = max(AI_RETRY_DELAY_SECONDS, float(getattr(config, "AI_EVALUATION_MAX_RETRY_DELAY_SECONDS", 60)))
 _gemini_backoff = ProviderBackoff()
+_groq_backoff = ProviderBackoff()
 _gateway_backoff = ProviderBackoff()
 
 
@@ -426,6 +429,21 @@ def evaluate_listing(
         if _deadline_reached(deadline):
             return None, True
 
+        # 1. Try Groq first
+        if not _groq_backoff.wait_if_needed(deadline):
+            return None, True
+        if _deadline_reached(deadline):
+            return None, True
+        groq_verdict = _groq.evaluate(prompt, skip_retries=attempt > 1)
+        if not groq_verdict.hit_rate_limit and groq_verdict.reason != "evaluation failed":
+            _groq_backoff.clear()
+            return groq_verdict, False
+
+        log.warning("Groq unavailable/rate-limited for '%s' on attempt %s; trying Gemini", listing.title, attempt)
+        if groq_verdict.hit_rate_limit:
+            _groq_backoff.activate(config.GROQ_SHARED_BACKOFF_SECONDS)
+
+        # 2. Try Gemini
         if not _gemini_backoff.wait_if_needed(deadline):
             return None, True
         if _deadline_reached(deadline):
@@ -436,7 +454,10 @@ def evaluate_listing(
             return gemini_verdict, False
 
         log.warning("Gemini unavailable/rate-limited for '%s' on attempt %s; trying AI Gateway", listing.title, attempt)
+        if gemini_verdict.hit_rate_limit:
+            _gemini_backoff.activate(config.GEMINI_SHARED_BACKOFF_SECONDS)
         
+        # 3. Try Gateway
         if not _gateway_backoff.wait_if_needed(deadline):
             return None, True
         if _deadline_reached(deadline):
@@ -449,9 +470,7 @@ def evaluate_listing(
         # If we got here, Gateway failed as well. Activate its backoff.
         _gateway_backoff.activate(config.AI_GATEWAY_SHARED_BACKOFF_SECONDS)
 
-        reason = "Gemini rate limited" if gemini_verdict.hit_rate_limit else "both AI providers failed"
-        if gemini_verdict.hit_rate_limit:
-            _gemini_backoff.activate(config.GEMINI_SHARED_BACKOFF_SECONDS)
+        reason = "all AI providers failed"
         
         log.warning("%s for '%s' on attempt %s/%s", reason, listing.title, attempt, AI_MAX_ATTEMPTS_PER_CANDIDATE)
         if attempt < AI_MAX_ATTEMPTS_PER_CANDIDATE and not _sleep_until(deadline, min(AI_MAX_RETRY_DELAY_SECONDS, delay)):

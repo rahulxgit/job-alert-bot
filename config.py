@@ -233,6 +233,16 @@ GATEWAY_SHARED_BACKOFF_SECONDS = max(0.0, float(os.environ.get("GATEWAY_SHARED_B
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash-lite"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+
+GROQ_TIMEOUT_SECONDS = int(os.environ.get("GROQ_TIMEOUT_SECONDS", "30"))
+GROQ_MAX_RETRIES = int(os.environ.get("GROQ_MAX_RETRIES", "1"))
+GROQ_MAX_RETRY_WAIT_SECONDS = int(os.environ.get("GROQ_MAX_RETRY_WAIT_SECONDS", "5"))
+GROQ_MAX_OUTPUT_TOKENS = int(os.environ.get("GROQ_MAX_OUTPUT_TOKENS", "1536"))
+GROQ_SHARED_BACKOFF_SECONDS = max(1.0, float(os.environ.get("GROQ_SHARED_BACKOFF_SECONDS", "5")))
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-70b-versatile")
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
 AI_GATEWAY_SHARED_BACKOFF_SECONDS = max(1.0, float(os.environ.get("AI_GATEWAY_SHARED_BACKOFF_SECONDS", "30")))
 AI_GATEWAY_URL = os.environ.get("AI_GATEWAY_URL") or "https://ai-gateway-wx35.onrender.com"
 

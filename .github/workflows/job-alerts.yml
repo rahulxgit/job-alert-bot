@@ -87,6 +87,7 @@ jobs:
           GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           LINKEDIN_LI_AT_COOKIE: ${{ secrets.LINKEDIN_LI_AT_COOKIE }}
           HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
@@ -106,7 +107,7 @@ jobs:
           JOBSPY_RESULTS_PER_SITE: "15"
           JOBSPY_CALL_TIMEOUT_SECONDS: "60"
           LLM_EVALUATION_BUDGET_SECONDS: "3300"
-          AI_MAX_CONCURRENCY: "2"
+          AI_MAX_CONCURRENCY: "6"
           GEMINI_SHARED_BACKOFF_SECONDS: "65"
           # The gateway (Render free tier) can take well over the old 12s
           # to wake a cold provider; give it real headroom instead of
