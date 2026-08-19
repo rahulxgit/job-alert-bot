@@ -106,7 +106,8 @@ jobs:
           JOBSPY_RESULTS_PER_SITE: "15"
           JOBSPY_CALL_TIMEOUT_SECONDS: "60"
           LLM_EVALUATION_BUDGET_SECONDS: "3300"
-          AI_MAX_CONCURRENCY: "6"
+          AI_MAX_CONCURRENCY: "2"
+          GEMINI_SHARED_BACKOFF_SECONDS: "65"
           # The gateway (Render free tier) can take well over the old 12s
           # to wake a cold provider; give it real headroom instead of
           # falling back to Gemini on nearly every request.
