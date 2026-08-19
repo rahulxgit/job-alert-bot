@@ -233,6 +233,7 @@ GATEWAY_SHARED_BACKOFF_SECONDS = max(0.0, float(os.environ.get("GATEWAY_SHARED_B
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-2.5-flash-lite"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+AI_GATEWAY_SHARED_BACKOFF_SECONDS = max(1.0, float(os.environ.get("AI_GATEWAY_SHARED_BACKOFF_SECONDS", "30")))
 AI_GATEWAY_URL = os.environ.get("AI_GATEWAY_URL") or "https://ai-gateway-wx35.onrender.com"
 
 # --- Recruiter email enrichment ---------------------------------------------

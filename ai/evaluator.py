@@ -446,6 +446,9 @@ def evaluate_listing(
             _gateway_backoff.clear()
             return gateway_verdict, False
 
+        # If we got here, Gateway failed as well. Activate its backoff.
+        _gateway_backoff.activate(config.AI_GATEWAY_SHARED_BACKOFF_SECONDS)
+
         reason = "Gemini rate limited" if gemini_verdict.hit_rate_limit else "both AI providers failed"
         if gemini_verdict.hit_rate_limit:
             _gemini_backoff.activate(config.GEMINI_SHARED_BACKOFF_SECONDS)
