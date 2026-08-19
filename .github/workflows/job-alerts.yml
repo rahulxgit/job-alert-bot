@@ -76,7 +76,7 @@ jobs:
       - name: Install Crawl4AI browser
         env:
           DEBIAN_FRONTEND: noninteractive
-        run: python -m playwright install --with-deps chromium
+        run: python -m playwright install chromium
 
       - name: Run job search script
         env:
