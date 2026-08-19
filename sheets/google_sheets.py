@@ -14,12 +14,16 @@ log = get_logger("sheets")
 
 
 def get_sheet():
-    creds = ServiceAccountCredentials.from_service_account_info(
-        json.loads(config.GOOGLE_SERVICE_ACCOUNT_JSON),
-        scopes=["https://www.googleapis.com/auth/spreadsheets"],
-    )
-    client = gspread.authorize(creds)
-    return client.open_by_key(config.GOOGLE_SHEET_ID).sheet1
+    try:
+        creds = ServiceAccountCredentials.from_service_account_info(
+            json.loads(config.GOOGLE_SERVICE_ACCOUNT_JSON),
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        client = gspread.authorize(creds)
+        return client.open_by_key(config.GOOGLE_SHEET_ID).sheet1
+    except Exception as exc:
+        log.warning("Google Sheets initialization failed: %s", exc)
+        return None
 
 
 import pathlib
@@ -29,6 +33,8 @@ PENDING_QUEUE = pathlib.Path("run-artifacts/sheets-pending-queue.json")
 
 def get_seen_urls(sheet) -> set:
     try:
+        if sheet is None:
+            raise ValueError("Sheet is not available")
         urls = sheet.col_values(1)
         seen = set(urls[1:])
         SEEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
@@ -113,6 +119,8 @@ def log_new_jobs(sheet, listings: list[JobListing]):
 
     log.info("Writing %s normalized job rows to Google Sheets", len(rows))
     try:
+        if sheet is None:
+            raise ValueError("Sheet is not available")
         sheet.append_rows(rows, value_input_option="USER_ENTERED")
         if PENDING_QUEUE.exists():
             PENDING_QUEUE.unlink()
