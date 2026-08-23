@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import config
 import main
 import sources.crawl4ai_discovery as discovery
-from sources.crawl4ai_discovery import _extract_links, _looks_job_url, _looks_like_job_text, _normalize_url
+from sources.crawl4ai_discovery import _extract_links, _extract_title, _looks_job_url, _looks_like_job_text, _normalize_url
 
 
 def test_normalize_url_removes_tracking_parameters():
@@ -150,3 +150,32 @@ def test_discovery_raises_blocked_when_anti_bot_pages_detected(monkeypatch):
 def test_looks_like_anti_bot_detects_short_challenge_pages():
     assert discovery._looks_like_anti_bot("Just a moment...\nChecking your browser before accessing.")
     assert not discovery._looks_like_anti_bot("Software Engineer\nRequirements\n" + "x" * 400)
+
+
+def test_extract_title_prefers_real_page_title_over_first_markdown_line():
+    # A real job page's <title> tag should win over nav junk that happens to
+    # render first in the markdown.
+    markdown = "Close\n\nSoftware Engineer - Backend\nRequirements..."
+    assert _extract_title(markdown, "Backend Engineer at Acme Corp") == "Backend Engineer at Acme Corp"
+
+
+def test_extract_title_rejects_nav_chrome_lines():
+    # Reproduces the reported incident: garbage "titles" like bare nav links
+    # and modal buttons were being fed into the AI evaluator as fake candidates.
+    assert _extract_title("Close\nSoftware Engineer\nRequirements", "") == "Software Engineer"
+    assert _extract_title("[About](https://www.ycombinator.com/about)\nFull Stack Developer", "") == "Full Stack Developer"
+    assert _extract_title("[](https://wellfound.com/)\nProduct Engineer", "") == "Product Engineer"
+
+
+def test_extract_title_unwraps_nested_image_link_markdown():
+    # Nested image-in-link markdown (a logo wrapped in a link) must never be
+    # returned as raw markdown syntax — it should unwrap to plain text even
+    # when that text is a logo caption rather than a real job title.
+    markdown = "[![Cutshort logo](https://cutshort.io/logo.png)](https://cutshort.io/)\nBackend Engineer"
+    title = _extract_title(markdown, "")
+    assert "[" not in title and "(" not in title
+    assert title == "Cutshort logo"
+
+
+def test_extract_title_falls_back_to_default_when_nothing_usable():
+    assert _extract_title("Close\n[](https://x.com/)", "") == "Software Engineer"

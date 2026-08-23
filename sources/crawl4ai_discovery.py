@@ -169,12 +169,45 @@ def _extract_links(markdown: str, base_url: str) -> list[str]:
     return normalized
 
 
+_NAV_TITLE_BLOCKLIST = {
+    "", "close", "menu", "about", "home", "sign in", "sign up", "log in", "login",
+    "contact", "contact us", "careers", "jobs", "blog", "help", "faq", "search",
+    "skip to content", "skip to main content", "toggle navigation", "toggle menu",
+    "privacy policy", "terms of service", "cookie policy",
+}
+
+_MARKDOWN_LINK_PATTERN = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+
+
+def _strip_markdown_link_syntax(text: str) -> str:
+    """Unwrap [text](url) / ![alt](url) — including nested image-in-link
+    markdown like [![logo](img-url)](page-url) — down to the visible text."""
+    previous = None
+    current = text
+    while previous != current:
+        previous = current
+        current = _MARKDOWN_LINK_PATTERN.sub(r"\1", current)
+    return current.strip()
+
+
 def _extract_title(markdown: str, fallback: str) -> str:
+    """Prefer the page's real <title> tag (passed in as fallback) over
+    scanning markdown lines: the first non-empty markdown line on a job
+    board page is frequently nav chrome (e.g. "Close", "[About](url)", a
+    bare or nested-image link) rather than the actual job title, and those
+    were being fed straight into the AI evaluator as fake candidates."""
+    fallback_clean = _strip_markdown_link_syntax((fallback or "").strip())
+    if fallback_clean and fallback_clean.lower() not in _NAV_TITLE_BLOCKLIST and 3 <= len(fallback_clean) <= 160:
+        return fallback_clean
+
     for line in (markdown or "").splitlines():
-        cleaned = line.strip().lstrip("#").strip()
+        cleaned = _strip_markdown_link_syntax(line.strip().lstrip("#").strip())
+        if cleaned.lower() in _NAV_TITLE_BLOCKLIST:
+            continue
         if 3 <= len(cleaned) <= 160:
             return cleaned
-    return fallback or "Software Engineer"
+
+    return fallback_clean or "Software Engineer"
 
 
 def _guess_company(title: str, url: str) -> str:
