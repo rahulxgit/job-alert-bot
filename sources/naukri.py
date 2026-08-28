@@ -39,12 +39,7 @@ class NaukriSource(JobSource):
 
         for term in config.NAUKRI_SEARCH_TERMS:
             if consecutive_block_failures >= breaker_threshold:
-                log.warning(
-                    "Naukri circuit breaker opened after %s consecutive 406 responses; "
-                    "skipping remaining queries for this run",
-                    consecutive_block_failures,
-                )
-                break
+                raise RuntimeError(f"Naukri API blocked (HTTP 406 Not Acceptable) after {consecutive_block_failures} consecutive failures")
 
             params = {
                 "noOfResults": 20, "urlType": "search_by_key_loc", "searchType": "adv",

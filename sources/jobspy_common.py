@@ -18,14 +18,16 @@ from utils.logging_setup import get_logger
 
 log = get_logger("jobspy")
 
-_cached_df = None
+import threading
 
+_cached_df = None
+_fetch_lock = threading.Lock()
 
 def _scrape_one_combo(term: str, location: str):
     return scrape_jobs(
         site_name=config.JOBSPY_SITES,
         search_term=term,
-        google_search_term=f"{term} jobs near {location}",
+        google_search_term=f"{term} fresher jobs {location}",
         location=location,
         results_wanted=config.RESULTS_PER_SITE,
         hours_old=config.HOURS_OLD,
@@ -52,62 +54,64 @@ def fetch_all_jobspy_listings() -> pd.DataFrame:
     reduced without reducing the number of searches or results requested.
     """
     global _cached_df
-    if _cached_df is not None:
-        return _cached_df
+    
+    with _fetch_lock:
+        if _cached_df is not None:
+            return _cached_df
 
-    combinations = []
-    max_combinations = max(1, int(config.JOBSPY_MAX_COMBINATIONS))
-    for term in config.SEARCH_TERMS:
-        for location in config.LOCATIONS:
+        combinations = []
+        max_combinations = max(1, int(config.JOBSPY_MAX_COMBINATIONS))
+        for term in config.SEARCH_TERMS:
+            for location in config.LOCATIONS:
+                if len(combinations) >= max_combinations:
+                    break
+                combinations.append((term, location))
             if len(combinations) >= max_combinations:
                 break
-            combinations.append((term, location))
-        if len(combinations) >= max_combinations:
-            break
 
-    if not combinations:
-        _cached_df = pd.DataFrame()
+        if not combinations:
+            _cached_df = pd.DataFrame()
+            return _cached_df
+
+        configured_concurrency = int(os.environ.get("JOBSPY_MAX_CONCURRENCY", "4"))
+        concurrency = max(1, min(len(combinations), configured_concurrency))
+        log.info(
+            "[JobSpy] Running %s bounded combinations with concurrency=%s (budget=%s)",
+            len(combinations),
+            concurrency,
+            max_combinations,
+        )
+
+        all_results = []
+        with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="jobspy") as executor:
+            futures = {
+                executor.submit(_run_combo, term, location): (term, location)
+                for term, location in combinations
+            }
+            for future in as_completed(futures):
+                term, location = futures[future]
+                try:
+                    df = future.result()
+                except Exception as exc:
+                    log.warning("[JobSpy] '%s' in '%s' failed: %s", term, location, exc)
+                    continue
+                if df is not None and not df.empty:
+                    all_results.append(df)
+
+        log.info(
+            "[JobSpy] Completed %s bounded combinations (budget=%s)",
+            len(combinations),
+            max_combinations,
+        )
+
+        if not all_results:
+            _cached_df = pd.DataFrame()
+            return _cached_df
+
+        combined = pd.concat(all_results, ignore_index=True)
+        combined["source"] = combined.get("site", "jobspy").astype(str).str.capitalize()
+        _cached_df = combined[["job_url", "title", "company", "location", "description", "source"]]
         return _cached_df
-
-    configured_concurrency = int(os.environ.get("JOBSPY_MAX_CONCURRENCY", "4"))
-    concurrency = max(1, min(len(combinations), configured_concurrency))
-    log.info(
-        "[JobSpy] Running %s bounded combinations with concurrency=%s (budget=%s)",
-        len(combinations),
-        concurrency,
-        max_combinations,
-    )
-
-    all_results = []
-    with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="jobspy") as executor:
-        futures = {
-            executor.submit(_run_combo, term, location): (term, location)
-            for term, location in combinations
-        }
-        for future in as_completed(futures):
-            term, location = futures[future]
-            try:
-                df = future.result()
-            except Exception as exc:
-                log.warning("[JobSpy] '%s' in '%s' failed: %s", term, location, exc)
-                continue
-            if df is not None and not df.empty:
-                all_results.append(df)
-
-    log.info(
-        "[JobSpy] Completed %s bounded combinations (budget=%s)",
-        len(combinations),
-        max_combinations,
-    )
-
-    if not all_results:
-        _cached_df = pd.DataFrame()
-        return _cached_df
-
-    combined = pd.concat(all_results, ignore_index=True)
-    combined["source"] = combined.get("site", "jobspy").astype(str).str.capitalize()
-    _cached_df = combined[["job_url", "title", "company", "location", "description", "source"]]
-    return _cached_df
 
 
 def dataframe_to_listings(df: pd.DataFrame, site_filter: str = None) -> list[JobListing]:

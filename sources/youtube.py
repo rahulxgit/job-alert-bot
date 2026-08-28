@@ -13,7 +13,7 @@ import requests
 
 import config
 from models import JobListing
-from sources.base import JobSource
+from sources.base import JobSource, NotConfiguredError
 from utils.text import extract_job_links_from_description
 from utils.logging_setup import get_logger
 
@@ -90,8 +90,7 @@ class YouTubeSource(JobSource):
 
     def fetch_listings(self) -> list[JobListing]:
         if not config.YOUTUBE_API_KEY:
-            log.info("YOUTUBE_API_KEY not set — skipping")
-            return []
+            raise NotConfiguredError("YOUTUBE_API_KEY not set")
 
         rows = []
         rows.extend(self._fetch_channels())

@@ -5,10 +5,13 @@ from abc import ABC, abstractmethod
 from models import JobListing
 
 
+class NotConfiguredError(Exception): pass
+class SourceDisabledError(Exception): pass
+
 class JobSource(ABC):
     name: str = "unknown"
 
     @abstractmethod
     def fetch_listings(self) -> list[JobListing]:
-        """Must never raise — catch internally, log, return [] on failure."""
+        """Can raise NotConfiguredError or SourceDisabledError."""
         ...
