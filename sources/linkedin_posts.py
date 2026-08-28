@@ -13,7 +13,7 @@ import requests
 
 import config
 from models import JobListing
-from sources.base import JobSource
+from sources.base import JobSource, NotConfiguredError
 from utils.logging_setup import get_logger
 
 log = get_logger("linkedin_posts")
@@ -24,8 +24,7 @@ class LinkedInPostsSource(JobSource):
 
     def fetch_listings(self) -> list[JobListing]:
         if not config.LINKEDIN_LI_AT_COOKIE:
-            log.info("LINKEDIN_LI_AT_COOKIE not set — skipping")
-            return []
+            raise NotConfiguredError("LINKEDIN_LI_AT_COOKIE not set")
 
         rows = []
         session = requests.Session()

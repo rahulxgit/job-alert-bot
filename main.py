@@ -88,7 +88,8 @@ def fetch_all() -> tuple[list[JobListing], dict[str, int], dict[str, SourceHealt
                     health.errors.append(str(exc))
                     health.error_classification = classification
                     health.http_api_failures = int(classification.startswith("HTTP_"))
-                    log.warning("%s raised unexpectedly: classification=%s error=%s", name, classification, exc)
+                    if classification not in ("NOT_CONFIGURED", "DISABLED"):
+                        log.warning("%s raised unexpectedly: classification=%s error=%s", name, classification, exc)
             except Exception as exc:
                 name, listings = source.name, []
                 duration = 0.0
@@ -98,7 +99,13 @@ def fetch_all() -> tuple[list[JobListing], dict[str, int], dict[str, SourceHealt
             health.duration_seconds = max(0.0, duration)
             health.finished_at = datetime.now(timezone.utc).isoformat()
             if health.errors:
-                if health.error_classification == "HTTP_429":
+                if health.error_classification == "NOT_CONFIGURED":
+                    health.status = "NOT_CONFIGURED"
+                    log.info("%s disabled: missing optional credential", name)
+                elif health.error_classification == "DISABLED":
+                    health.status = "DISABLED"
+                    log.info("%s disabled: explicitly disabled", name)
+                elif health.error_classification == "HTTP_429":
                     health.status = "RATE_LIMITED"
                 elif health.error_classification == "HTTP_403":
                     health.status = "BLOCKED"
@@ -107,16 +114,17 @@ def fetch_all() -> tuple[list[JobListing], dict[str, int], dict[str, SourceHealt
             elif not listings:
                 health.status = "NO_RESULTS"
             else:
-                health.status = "HEALTHY"
+                health.status = "SUCCESS"
 
-            source_counts[name] = len(listings)
-            health.jobs_found = len(listings)
-            health.urls_discovered = len(listings)
-            all_listings.extend(listings)
-            log.info(
-                "%s: %s listings | status=%s | duration=%.2fs | error=%s",
-                name, len(listings), health.status, health.duration_seconds, health.error_classification or "none",
-            )
+            if health.status not in ("NOT_CONFIGURED", "DISABLED"):
+                source_counts[name] = len(listings)
+                health.jobs_found = len(listings)
+                health.urls_discovered = len(listings)
+                all_listings.extend(listings)
+                log.info(
+                    "%s: %s listings | status=%s | duration=%.2fs | error=%s",
+                    name, len(listings), health.status, health.duration_seconds, health.error_classification or "none",
+                )
 
     zero_sources = [name for name, health in source_health.items() if health.enabled and health.jobs_found == 0]
     failed_sources = [name for name, health in source_health.items() if health.status == "FAILED"]

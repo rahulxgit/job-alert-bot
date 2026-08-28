@@ -46,7 +46,7 @@ import requests
 
 import config
 from models import JobListing
-from sources.base import JobSource
+from sources.base import JobSource, NotConfiguredError, SourceDisabledError
 from utils.logging_setup import get_logger
 
 log = get_logger("firecrawl")
@@ -106,7 +106,7 @@ def _guess_company(title: str, url: str) -> str:
 
 def _guess_location(text: str) -> str:
     text_lower = text.lower()
-    for loc in config.FIRECRAWL_LOCATIONS + ["Hyderabad", "Gurgaon", "Gurugram", "Noida", "Delhi", "Mumbai", "Chennai", "Kolkata", "Remote"]:
+    for loc in config.PREFERRED_LOCATIONS:
         if loc.lower() in text_lower:
             return loc
     return "India"
@@ -312,11 +312,9 @@ class FirecrawlSource(JobSource):
 
     def fetch_listings(self) -> list[JobListing]:
         if not config.FIRECRAWL_ENABLED:
-            log.info("disabled via FIRECRAWL_ENABLED=false — skipping")
-            return []
+            raise SourceDisabledError("FIRECRAWL_ENABLED=false")
         if not config.FIRECRAWL_API_KEY:
-            log.info("FIRECRAWL_API_KEY not set — skipping")
-            return []
+            raise NotConfiguredError("FIRECRAWL_API_KEY not set")
 
         queries = config.FIRECRAWL_SEARCH_QUERIES[:config.FIRECRAWL_MAX_QUERIES]
         rows: list[JobListing] = []

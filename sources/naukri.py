@@ -38,72 +38,70 @@ class NaukriSource(JobSource):
         consecutive_block_failures = 0
 
         for term in config.NAUKRI_SEARCH_TERMS:
-            if consecutive_block_failures >= breaker_threshold:
-                log.warning(
-                    "Naukri circuit breaker opened after %s consecutive 406 responses; "
-                    "skipping remaining queries for this run",
-                    consecutive_block_failures,
-                )
-                break
+            for location in getattr(config, "NAUKRI_SEARCH_LOCATIONS", ["Pune", "Bengaluru", "Hyderabad", "Gurugram"]):
+                if consecutive_block_failures >= breaker_threshold:
+                    log.warning(f"Naukri API blocked (HTTP 406 Not Acceptable) after {consecutive_block_failures} consecutive failures. Stopping further requests.")
+                    return rows
 
-            params = {
-                "noOfResults": 20, "urlType": "search_by_key_loc", "searchType": "adv",
-                "keyword": term, "location": "bangalore", "k": term, "l": "bangalore",
-                "experience": 0,
-            }
-            data = None
-            for attempt in range(3):
-                try:
-                    resp = requests.get(
-                        "https://www.naukri.com/jobapi/v3/search",
-                        headers=headers,
-                        params=params,
-                        timeout=15,
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    consecutive_block_failures = 0
-                    break
-                except requests.exceptions.HTTPError as exc:
-                    status = exc.response.status_code if exc.response is not None else None
-                    if status == 406:
-                        consecutive_block_failures += 1
-                        log.warning(
-                            "fetch failed for '%s' (406 Not Acceptable), consecutive=%s/%s",
-                            term,
-                            consecutive_block_failures,
-                            breaker_threshold,
+                params = {
+                    "noOfResults": 20, "urlType": "search_by_key_loc", "searchType": "adv",
+                    "keyword": term, "location": location, "k": term, "l": location,
+                    "experience": 0,
+                }
+                data = None
+                for attempt in range(3):
+                    try:
+                        resp = requests.get(
+                            "https://www.naukri.com/jobapi/v3/search",
+                            headers=headers,
+                            params=params,
+                            timeout=15,
                         )
-                        break
-                    elif status in (429, 500, 502, 503, 504) and attempt < 2:
-                        time.sleep(2 ** attempt)
-                        continue
-                    else:
+                        resp.raise_for_status()
+                        data = resp.json()
                         consecutive_block_failures = 0
-                        log.warning("fetch failed for '%s': %s", term, exc)
                         break
-                except Exception as exc:
-                    if attempt < 2:
-                        time.sleep(2 ** attempt)
-                        continue
-                    consecutive_block_failures = 0
-                    log.warning("fetch failed for '%s': %s", term, exc)
-                    break
-            
-            if not data:
-                continue
-
-            for job in data.get("jobDetails", []):
-                job_id = job.get("jobId", "")
-                job_url = job.get("staticUrl", "") or (f"https://www.naukri.com/job-listings-{job_id}" if job_id else "")
-                if not job_url:
+                    except requests.exceptions.HTTPError as exc:
+                        status = exc.response.status_code if exc.response is not None else None
+                        if status == 406:
+                            consecutive_block_failures += 1
+                            log.warning(
+                                "fetch failed for '%s' in '%s' (406 Not Acceptable), consecutive=%s/%s",
+                                term,
+                                location,
+                                consecutive_block_failures,
+                                breaker_threshold,
+                            )
+                            break
+                        elif status in (429, 500, 502, 503, 504) and attempt < 2:
+                            time.sleep(2 ** attempt)
+                            continue
+                        else:
+                            consecutive_block_failures = 0
+                            log.warning("fetch failed for '%s' in '%s': %s", term, location, exc)
+                            break
+                    except Exception as exc:
+                        if attempt < 2:
+                            time.sleep(2 ** attempt)
+                            continue
+                        consecutive_block_failures = 0
+                        log.warning("fetch failed for '%s' in '%s': %s", term, location, exc)
+                        break
+                
+                if not data:
                     continue
-                placeholders = job.get("placeholders", {})
-                location = placeholders.get("location", "India") if isinstance(placeholders, dict) else "India"
-                rows.append(JobListing(
-                    job_url=job_url, title=job.get("title", ""), company=job.get("companyName", ""),
-                    location=location, description=job.get("jobDescription", "") or job.get("title", ""),
-                    source=self.name,
-                ))
-            time.sleep(1)
+
+                for job in data.get("jobDetails", []):
+                    job_id = job.get("jobId", "")
+                    job_url = job.get("staticUrl", "") or (f"https://www.naukri.com/job-listings-{job_id}" if job_id else "")
+                    if not job_url:
+                        continue
+                    placeholders = job.get("placeholders", {})
+                    job_location = placeholders.get("location", location) if isinstance(placeholders, dict) else location
+                    rows.append(JobListing(
+                        job_url=job_url, title=job.get("title", ""), company=job.get("companyName", ""),
+                        location=job_location, description=job.get("jobDescription", "") or job.get("title", ""),
+                        source=self.name,
+                    ))
+                time.sleep(1)
         return rows

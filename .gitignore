@@ -4,4 +4,6 @@ __pycache__/
 venv/
 run-artifacts/
 temp_artifacts/
+graphify-out/
+.claude/
 *.log

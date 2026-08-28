@@ -18,14 +18,38 @@ from utils.logging_setup import get_logger
 
 log = get_logger("jobspy")
 
-_cached_df = None
+import threading
+import hashlib
+from datetime import datetime
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
+from concurrent.futures import Future
 
+_cached_df = None
+_fetch_lock = threading.Lock()
+_fetch_future = None
+
+def _get_google_query(term: str, location: str) -> str:
+    forms = [
+        f"{term} fresher jobs {location}",
+        f"{term} 0-2 years {location}",
+        f"{term} {location} fresher",
+        f"{term} hiring {location}",
+        f"{term} walk-in {location}",
+    ]
+    # Rotate queries deterministically based on today's Indian date
+    run_date = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+    idx = int(hashlib.md5(f"{term}:{location}:{run_date}".encode()).hexdigest(), 16) % len(forms)
+    return forms[idx]
 
 def _scrape_one_combo(term: str, location: str):
+    google_term = _get_google_query(term, location)
     return scrape_jobs(
         site_name=config.JOBSPY_SITES,
         search_term=term,
-        google_search_term=f"{term} jobs near {location}",
+        google_search_term=google_term,
         location=location,
         results_wanted=config.RESULTS_PER_SITE,
         hours_old=config.HOURS_OLD,
@@ -51,63 +75,107 @@ def fetch_all_jobspy_listings() -> pd.DataFrame:
     are now executed with a small bounded worker pool so wall-clock time is
     reduced without reducing the number of searches or results requested.
     """
-    global _cached_df
-    if _cached_df is not None:
-        return _cached_df
+    global _cached_df, _fetch_future
+    
+    with _fetch_lock:
+        if _cached_df is not None:
+            return _cached_df
+        if _fetch_future is None:
+            _fetch_future = Future()
+            first_thread = True
+        else:
+            first_thread = False
 
-    combinations = []
-    max_combinations = max(1, int(config.JOBSPY_MAX_COMBINATIONS))
-    for term in config.SEARCH_TERMS:
+    if not first_thread:
+        return _fetch_future.result()
+
+    try:
+        max_combinations = max(1, int(config.JOBSPY_MAX_COMBINATIONS))
+        
+        # Build intent families
+        families = [
+            getattr(config, "NORMAL_SDE_TERMS", ["software engineer"]),
+            getattr(config, "FULL_STACK_TERMS", ["full stack developer"]),
+            getattr(config, "FRONTEND_TERMS", ["frontend developer"]),
+            getattr(config, "BACKEND_TERMS", ["backend developer"]),
+            getattr(config, "AI_TERMS", ["ai engineer"]),
+            getattr(config, "WALKIN_SEARCH_TERMS", ["walk-in software engineer"])
+        ]
+        
+        # Distribute combinations round-robin across BOTH families and locations to prevent starvation
+        pools = []
         for location in config.LOCATIONS:
-            if len(combinations) >= max_combinations:
-                break
-            combinations.append((term, location))
-        if len(combinations) >= max_combinations:
-            break
+            for family in families:
+                pools.append([(term, location) for term in family])
+                
+        combinations = []
+        idx = 0
+        while len(combinations) < max_combinations and any(pools):
+            pool = pools[idx % len(pools)]
+            if pool:
+                combinations.append(pool.pop(0))
+            idx += 1
 
-    if not combinations:
-        _cached_df = pd.DataFrame()
+        if not combinations:
+            _cached_df = pd.DataFrame()
+            _fetch_future.set_result(_cached_df)
+            with _fetch_lock:
+                _fetch_future = None
+            return _cached_df
+
+        configured_concurrency = int(os.environ.get("JOBSPY_MAX_CONCURRENCY", "4"))
+        concurrency = max(1, min(len(combinations), configured_concurrency))
+        log.info(
+            "[JobSpy] Running %s bounded combinations with concurrency=%s (budget=%s)",
+            len(combinations),
+            concurrency,
+            max_combinations,
+        )
+
+        all_results = []
+        with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="jobspy") as executor:
+            futures_map = {
+                executor.submit(_run_combo, term, location): (term, location)
+                for term, location in combinations
+            }
+            for future in as_completed(futures_map):
+                term, location = futures_map[future]
+                try:
+                    df = future.result()
+                except Exception as exc:
+                    log.warning("[JobSpy] '%s' in '%s' failed: %s", term, location, exc)
+                    continue
+                if df is not None and not df.empty:
+                    all_results.append(df)
+
+        log.info(
+            "[JobSpy] Completed %s bounded combinations (budget=%s)",
+            len(combinations),
+            max_combinations,
+        )
+
+        if not all_results:
+            _cached_df = pd.DataFrame()
+            _fetch_future.set_result(_cached_df)
+            with _fetch_lock:
+                _fetch_future = None
+            return _cached_df
+
+        combined = pd.concat(all_results, ignore_index=True)
+        site_col = combined.get("site")
+        if site_col is None:
+            site_col = pd.Series("jobspy", index=combined.index)
+        combined["source"] = site_col.fillna("jobspy").astype(str).str.capitalize()
+        _cached_df = combined[["job_url", "title", "company", "location", "description", "source"]]
+        _fetch_future.set_result(_cached_df)
+        with _fetch_lock:
+            _fetch_future = None
         return _cached_df
-
-    configured_concurrency = int(os.environ.get("JOBSPY_MAX_CONCURRENCY", "4"))
-    concurrency = max(1, min(len(combinations), configured_concurrency))
-    log.info(
-        "[JobSpy] Running %s bounded combinations with concurrency=%s (budget=%s)",
-        len(combinations),
-        concurrency,
-        max_combinations,
-    )
-
-    all_results = []
-    with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="jobspy") as executor:
-        futures = {
-            executor.submit(_run_combo, term, location): (term, location)
-            for term, location in combinations
-        }
-        for future in as_completed(futures):
-            term, location = futures[future]
-            try:
-                df = future.result()
-            except Exception as exc:
-                log.warning("[JobSpy] '%s' in '%s' failed: %s", term, location, exc)
-                continue
-            if df is not None and not df.empty:
-                all_results.append(df)
-
-    log.info(
-        "[JobSpy] Completed %s bounded combinations (budget=%s)",
-        len(combinations),
-        max_combinations,
-    )
-
-    if not all_results:
-        _cached_df = pd.DataFrame()
-        return _cached_df
-
-    combined = pd.concat(all_results, ignore_index=True)
-    combined["source"] = combined.get("site", "jobspy").astype(str).str.capitalize()
-    _cached_df = combined[["job_url", "title", "company", "location", "description", "source"]]
-    return _cached_df
+    except Exception as exc:
+        _fetch_future.set_exception(exc)
+        with _fetch_lock:
+            _fetch_future = None
+        raise
 
 
 def dataframe_to_listings(df: pd.DataFrame, site_filter: str = None) -> list[JobListing]:

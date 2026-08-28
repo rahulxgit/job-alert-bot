@@ -74,13 +74,14 @@ EVALUATION INSTRUCTIONS
 - Direct evidence should score higher than merely adjacent/transferable evidence.
 - For technical fit, compare languages, frameworks, backend, databases, APIs, architecture, AI/LLM, cloud/devops, testing, tooling, and other concrete JD requirements.
 - For project fit, identify the most relevant canonical projects and concrete engineering evidence; do not reward project quantity alone.
-- For education fit, check degree/branch, graduation timing, CGPA constraints, and stated eligibility; do not assume a branch is accepted when the JD explicitly excludes it.
+- For education fit, check degree/branch, graduation timing, CGPA constraints, and stated eligibility; do not hard-exclude B.Tech Biomedical unless explicitly banned (many roles accept 'any engineering branch').
 - For experience fit, distinguish internship/production project evidence from full-time professional experience.
 - Leadership, achievements, and CP data can improve fit when relevant but cannot override hard eligibility failures.
 - Location fit must use the profile's actual preferences; do not invent relocation willingness.
 - Company/industry preferences are a modest factor, not a standalone rejection reason.
 - If a material requirement cannot be verified, say so in gaps instead of assuming it.
 - Reasons and gaps must mention specific candidate/JD evidence.
+- WALK-IN DETECTION: If the JD mentions a walk-in/hiring drive, set is_walkin to true and extract walkin_date and venue.
 
 SCORING
 =======
@@ -92,6 +93,7 @@ education_match: 0-10
 location_match: 0-5
 company_quality: 0-5
 fit_score MUST equal the sum of these seven scores and be 0-100.
+If it is a walk-in drive in Pune for a software engineer role, boost location_match to 5 and role_match to 25.
 
 DECISION
 ========
@@ -119,7 +121,10 @@ stays well within the output token budget and is never truncated mid-JSON.
   "decision": "strong_match|good_match|weak_match|reject",
   "is_fresher_appropriate": true,
   "why": ["specific evidence"],
-  "gaps": ["specific gap or uncertainty"]
+  "gaps": ["specific gap or uncertainty"],
+  "is_walkin": false,
+  "walkin_date": "YYYY-MM-DD or empty",
+  "venue": ""
 }}
 """
 
@@ -153,8 +158,21 @@ def _parse_experience(text: str) -> dict:
     return res
 
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
+
 def _contains_any(text: str, terms: list[str]) -> list[str]:
-    return [term for term in terms if term in text]
+    return [term for term in terms if term.lower() in text]
+
+def _contains_any_word(text: str, terms: list[str]) -> list[str]:
+    found = []
+    for term in terms:
+        pattern = r'\b' + re.escape(term.lower()) + r'\b'
+        if re.search(pattern, text):
+            found.append(term)
+    return found
 
 
 def _location_score(text: str) -> tuple[int, bool]:
@@ -172,8 +190,12 @@ def _location_score(text: str) -> tuple[int, bool]:
 
 def _education_score(text: str) -> tuple[int, bool]:
     normalized = text.lower()
-    if _contains_any(normalized, config.EDUCATION_HARD_EXCLUSION_SIGNALS):
+    
+    # Reject explicit strict CS-only requirements using robust bounded tokens
+    cs_only_pattern = r"\b(?:computer science|cs|b\.?tech in cs|b\.?tech cs|it|information technology)(?: graduates| candidates| engineers| students)? only\b|\bstrictly (?:computer science|cs|it)\b"
+    if re.search(cs_only_pattern, normalized):
         return 0, True
+
     if _contains_any(normalized, config.EDUCATION_OPEN_SIGNALS):
         return 4, False
     return 2, False
@@ -187,10 +209,11 @@ def _freshness_score(listing: JobListing) -> tuple[int, bool]:
     if not match:
         return 0, False
     try:
-        posted = datetime.strptime(match.group(1), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        posted = datetime.strptime(match.group(1), "%Y-%m-%d").date()
     except ValueError:
         return 0, False
-    age_days = (datetime.now(timezone.utc) - posted).days
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    age_days = (today - posted).days
     if age_days < 0:
         return 1, False
     if age_days <= 3:
@@ -201,6 +224,141 @@ def _freshness_score(listing: JobListing) -> tuple[int, bool]:
         return 0, False
     return -3, True
 
+
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
+from dateutil import parser
+from datetime import date, datetime
+
+IST = ZoneInfo("Asia/Kolkata")
+
+WALKIN_DATE_CONTEXT_PATTERNS = [
+    r"\bwalk[-\s]?in\b",
+    r"\bwalk[-\s]?in interview\b",
+    r"\bwalk[-\s]?in drive\b",
+    r"\bhiring drive\b",
+    r"\binterview date\b",
+    r"\bdrive date\b",
+    r"\bhiring date\b",
+    r"\binterview\b",
+    r"\bdrive\b",
+]
+
+HISTORICAL_DATE_CONTEXT = [
+    r"\bhistorical_event\b",
+    r"\bprevious\b",
+    r"\blast\b",
+    r"\bheld on\b",
+    r"\bconducted on\b",
+    r"\bpast\b",
+    r"\bearlier\b",
+    r"\bwas held\b",
+    r"\bhad been held\b",
+    r"\bestablished\b",
+    r"\bfounded\b",
+    r"\bincorporated\b",
+    r"\bexperience\b",
+    r"\bgraduation\b",
+    r"\bjoining date\b",
+    r"\bdeadline\b"
+]
+
+DATE_PATTERN = re.compile(
+    r"\b(?:"
+    r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}"
+    r"|"
+    r"\d{1,2}[-/]\d{1,2}[-/]20\d{2}"
+    r"|"
+    r"\d{1,2}(?:st|nd|rd|th)?\s+"
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+20\d{2}"
+    r"|"
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+"
+    r"\d{1,2}(?:st|nd|rd|th)?\s+20\d{2}"
+    r")\b",
+    re.IGNORECASE,
+)
+
+RANGE_PATTERN = re.compile(
+    r"\b(\d{1,2}(?:st|nd|rd|th)?)\s*(?:-|to|and)\s*(\d{1,2}(?:st|nd|rd|th)?)\s+((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+20\d{2})\b",
+    re.IGNORECASE,
+)
+
+def _get_min_distance(patterns, text, date_start, date_end):
+    min_dist = float('inf')
+    for p in patterns:
+        for m in re.finditer(p, text, re.IGNORECASE):
+            if m.end() <= date_start:
+                dist = date_start - m.end()
+            elif m.start() >= date_end:
+                dist = m.start() - date_end
+            else:
+                dist = 0
+            if dist < min_dist:
+                min_dist = dist
+    return min_dist
+
+def _extract_walkin_date(text: str) -> tuple[date | None, date | None]:
+    if not text:
+        return None, None
+
+    candidates = []
+    
+    blocks = re.split(r'[\n\|]+', text.replace("–", "-").replace("—", "-"))
+    
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+            
+        block_mod = re.sub(
+            r'\b(previous|earlier|last|past)\s+(walk[-\s]?in|drive|interview|event)\b', 
+            r'historical_event', 
+            block, 
+            flags=re.IGNORECASE
+        )
+        
+        def process_match(start, end, d1, d2):
+            pos_dist = _get_min_distance(WALKIN_DATE_CONTEXT_PATTERNS, block_mod, start, end)
+            neg_dist = _get_min_distance(HISTORICAL_DATE_CONTEXT, block_mod, start, end)
+            if pos_dist > 150:
+                return
+            if neg_dist <= pos_dist:
+                return
+            candidates.append((min(d1, d2), max(d1, d2)))
+
+        for match in RANGE_PATTERN.finditer(block_mod):
+            try:
+                day1_str = re.sub(r'(st|nd|rd|th)', '', match.group(1), flags=re.IGNORECASE)
+                day2_str = re.sub(r'(st|nd|rd|th)', '', match.group(2), flags=re.IGNORECASE)
+                month_year_str = match.group(3)
+                d1 = parser.parse(f"{day1_str} {month_year_str}", fuzzy=True).date()
+                d2 = parser.parse(f"{day2_str} {month_year_str}", fuzzy=True).date()
+                process_match(match.start(), match.end(), d1, d2)
+            except Exception:
+                continue
+
+        for match in DATE_PATTERN.finditer(block_mod):
+            try:
+                d = parser.parse(match.group(0), fuzzy=True).date()
+                if any(r[0] <= d <= r[1] for r in candidates if r[1]):
+                    continue
+                process_match(match.start(), match.end(), d, d)
+            except Exception:
+                continue
+
+    if not candidates:
+        return None, None
+
+    today = datetime.now(IST).date()
+    active_or_upcoming = [c for c in candidates if c[1] >= today]
+    
+    if active_or_upcoming:
+        return min(active_or_upcoming, key=lambda x: x[0])
+    
+    return max(candidates, key=lambda x: x[1])
 
 def keyword_prefilter_score(listing: JobListing) -> int:
     title = (listing.title or "").lower()
@@ -215,11 +373,11 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     if seniority_hits >= 2 or not exp_info["eligible_for_rahul"]:
         return 0
 
-    role_hits = _contains_any(title, config.ROLE_MATCH_TERMS)
-    description_role_hits = _contains_any(description, config.ROLE_MATCH_TERMS)
+    role_hits = _contains_any_word(title, config.ROLE_MATCH_TERMS)
+    description_role_hits = _contains_any_word(description, config.ROLE_MATCH_TERMS)
     core_tech_hits = _contains_any(full_text, config.CORE_TECH_TERMS)
     
-    if not role_hits and len(core_tech_hits) < 1:
+    if not role_hits and not description_role_hits:
         return 0
 
     location_points, location_hard_mismatch = _location_score(location)
@@ -234,15 +392,44 @@ def keyword_prefilter_score(listing: JobListing) -> int:
 
     fresher_hits = _contains_any(full_text, config.FRESHER_SIGNALS)
     support_hits = _contains_any(full_text, config.PROFILE_KEYWORDS)
+    infra_hits = _contains_any(full_text, getattr(config, "INFRASTRUCTURE_KEYWORDS", []))
     score = 0
     score += min(len(role_hits), 3) * 5
     score += min(len(description_role_hits), 3)
     score += min(len(core_tech_hits), 6) * 2
-    score += min(len(support_hits), 8)
+    # Cap infrastructure terms so they can't dominate the score
+    score += min(len(support_hits), 8) + min(len(infra_hits), 2)
     score += min(len(fresher_hits), 2) * 4
     score += location_points
     score += education_points
     score += freshness_points
+
+    # Walk-in Scoring & Deterministic Detection
+    is_walkin = _contains_any(full_text, config.WALKIN_POSITIVE_SIGNALS)
+    has_negative_walkin = _contains_any(full_text, config.WALKIN_NEGATIVE_SIGNALS)
+    is_pune = _contains_any(full_text, config.PUNE_NEIGHBORHOODS)
+    
+    if is_walkin and not has_negative_walkin:
+        # Check explicit dates in JD text early to reject expired walk-ins deterministically
+        # Search for common date formats like 2024-03-24, 24th March, 24-03-2024
+        # Since LLM is bypassed for rejection, we use standard regexes.
+        start_date, end_date = _extract_walkin_date(description)
+        if end_date:
+            today = datetime.now(IST).date()
+            if end_date < today:
+                return 0
+                
+        # Require strong software engineering signal to grant the massive walk-in boost
+        has_strong_role = len(role_hits) > 0 or (len(description_role_hits) > 0 and len(core_tech_hits) > 0)
+        
+        if has_strong_role:
+            if getattr(config, "WALKIN_PRIORITY_ENABLED", True):
+                score += 15
+                if is_pune and getattr(config, "PUNE_WALKIN_PRIORITY", True):
+                    score += 35  # Massive boost for Pune walk-ins
+            
+    if getattr(config, "FRESHER_ONLY_MODE", False) and not fresher_hits:
+        return 0
 
     from utils.text import extract_email_from_text
     if extract_email_from_text(description):
@@ -378,6 +565,59 @@ def _apply_verdict(listing: JobListing, verdict: FitVerdict) -> bool:
     listing.fit_score = sum([listing.role_match, listing.experience_match, listing.technical_match, listing.project_match, listing.education_match, listing.location_match, listing.company_quality])
     listing.fresher_appropriate = getattr(verdict, "is_fresher_appropriate", False)
     listing.reason = getattr(verdict, "reason", "")
+    
+    # Walk-in fields
+    listing.is_walkin = getattr(verdict, "is_walkin", False)
+    raw_date = getattr(verdict, "walkin_date", "")
+    listing.venue = getattr(verdict, "venue", "")
+    
+    # Deterministic Walk-in Validation
+    if listing.is_walkin:
+        listing.verification_status = "unknown"
+        listing.walkin_date = ""
+        start_date, end_date = _extract_walkin_date(listing.description or "")
+        valid_date = None
+        if raw_date and re.search(r"(\d{4}-\d{2}-\d{2})", raw_date):
+            match = re.search(r"(\d{4}-\d{2}-\d{2})", raw_date)
+            try:
+                wd = datetime.strptime(match.group(1), "%Y-%m-%d").date()
+                if not start_date and not end_date:
+                    valid_date = wd
+                elif start_date and end_date and start_date <= wd <= end_date:
+                    valid_date = wd
+                elif start_date and wd == start_date:
+                    valid_date = wd
+                else:
+                    valid_date = start_date
+                    listing.walkin_date_conflict = True
+            except ValueError:
+                pass
+        elif start_date:
+            valid_date = start_date
+            if raw_date and start_date.strftime("%Y-%m-%d") != raw_date:
+                listing.walkin_date_conflict = True
+
+        if valid_date:
+            today = datetime.now(IST).date()
+            listing.walkin_date = valid_date.strftime("%Y-%m-%d")
+            effective_end = end_date if end_date else valid_date
+            effective_start = start_date if start_date else valid_date
+            
+            if (today - effective_end).days > 0:
+                listing.verification_status = "expired"
+                listing.fit_score = 0
+                listing.fresher_appropriate = False
+                listing.reason = "Walk-in drive has expired."
+                listing.fit_tier = "Reject"
+                return False
+            elif (today - effective_start).days >= 0 and (today - effective_end).days <= 0:
+                listing.verification_status = "active"
+            else:
+                listing.verification_status = "upcoming"
+    else:
+        listing.walkin_date = ""
+        listing.venue = ""
+    
     if isinstance(getattr(verdict, "why", None), list):
         listing.reason = "; ".join(verdict.why)
     if isinstance(getattr(verdict, "gaps", None), list):

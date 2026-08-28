@@ -49,6 +49,10 @@ def classify_exception(exc: Exception) -> str:
     text = str(exc).lower()
     name = type(exc).__name__.lower()
 
+    if "notconfigured" in name:
+        return "NOT_CONFIGURED"
+    if "sourcedisabled" in name:
+        return "DISABLED"
     if "timeout" in text or "timeout" in name:
         return "TIMEOUT"
     if "403" in text or "forbidden" in text:
