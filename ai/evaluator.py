@@ -248,6 +248,7 @@ WALKIN_DATE_CONTEXT_PATTERNS = [
 ]
 
 HISTORICAL_DATE_CONTEXT = [
+    r"\bhistorical_event\b",
     r"\bprevious\b",
     r"\blast\b",
     r"\bheld on\b",
@@ -285,12 +286,16 @@ RANGE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-def _get_min_distance(patterns, text, match_center):
+def _get_min_distance(patterns, text, date_start, date_end):
     min_dist = float('inf')
     for p in patterns:
         for m in re.finditer(p, text, re.IGNORECASE):
-            center = (m.start() + m.end()) / 2
-            dist = abs(center - match_center)
+            if m.end() <= date_start:
+                dist = date_start - m.end()
+            elif m.start() >= date_end:
+                dist = m.start() - date_end
+            else:
+                dist = 0
             if dist < min_dist:
                 min_dist = dist
     return min_dist
@@ -299,39 +304,50 @@ def _extract_walkin_date(text: str) -> tuple[date | None, date | None]:
     if not text:
         return None, None
 
-    normalized = " ".join(text.split()).replace("–", "-").replace("—", "-")
     candidates = []
     
-
-    def process_match(start, end, d1, d2):
-        match_center = (start + end) / 2
-        pos_dist = _get_min_distance(WALKIN_DATE_CONTEXT_PATTERNS, normalized, match_center)
-        neg_dist = _get_min_distance(HISTORICAL_DATE_CONTEXT, normalized, match_center)
-        if pos_dist > 150:
-            return
-        if neg_dist < pos_dist:
-            return
-        candidates.append((min(d1, d2), max(d1, d2)))
-
-    for match in RANGE_PATTERN.finditer(normalized):
-        try:
-            day1_str = re.sub(r'(st|nd|rd|th)', '', match.group(1), flags=re.IGNORECASE)
-            day2_str = re.sub(r'(st|nd|rd|th)', '', match.group(2), flags=re.IGNORECASE)
-            month_year_str = match.group(3)
-            d1 = parser.parse(f"{day1_str} {month_year_str}", fuzzy=True).date()
-            d2 = parser.parse(f"{day2_str} {month_year_str}", fuzzy=True).date()
-            process_match(match.start(), match.end(), d1, d2)
-        except Exception:
+    blocks = re.split(r'[\n\|]+', text.replace("–", "-").replace("—", "-"))
+    
+    for block in blocks:
+        block = block.strip()
+        if not block:
             continue
+            
+        block_mod = re.sub(
+            r'\b(previous|earlier|last|past)\s+(walk[-\s]?in|drive|interview|event)\b', 
+            r'historical_event', 
+            block, 
+            flags=re.IGNORECASE
+        )
+        
+        def process_match(start, end, d1, d2):
+            pos_dist = _get_min_distance(WALKIN_DATE_CONTEXT_PATTERNS, block_mod, start, end)
+            neg_dist = _get_min_distance(HISTORICAL_DATE_CONTEXT, block_mod, start, end)
+            if pos_dist > 150:
+                return
+            if neg_dist <= pos_dist:
+                return
+            candidates.append((min(d1, d2), max(d1, d2)))
 
-    for match in DATE_PATTERN.finditer(normalized):
-        try:
-            d = parser.parse(match.group(0), fuzzy=True).date()
-            if any(r[0] <= d <= r[1] for r in candidates if r[1]):
+        for match in RANGE_PATTERN.finditer(block_mod):
+            try:
+                day1_str = re.sub(r'(st|nd|rd|th)', '', match.group(1), flags=re.IGNORECASE)
+                day2_str = re.sub(r'(st|nd|rd|th)', '', match.group(2), flags=re.IGNORECASE)
+                month_year_str = match.group(3)
+                d1 = parser.parse(f"{day1_str} {month_year_str}", fuzzy=True).date()
+                d2 = parser.parse(f"{day2_str} {month_year_str}", fuzzy=True).date()
+                process_match(match.start(), match.end(), d1, d2)
+            except Exception:
                 continue
-            process_match(match.start(), match.end(), d, d)
-        except Exception:
-            continue
+
+        for match in DATE_PATTERN.finditer(block_mod):
+            try:
+                d = parser.parse(match.group(0), fuzzy=True).date()
+                if any(r[0] <= d <= r[1] for r in candidates if r[1]):
+                    continue
+                process_match(match.start(), match.end(), d, d)
+            except Exception:
+                continue
 
     if not candidates:
         return None, None
