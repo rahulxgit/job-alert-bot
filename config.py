@@ -6,19 +6,24 @@ to read and safe to import from anywhere without side effects.
 import os
 
 # --- Common Search Parameters ---
-COMMON_SEARCH_TERMS = [
-    # Primary Role Family
+NORMAL_SDE_TERMS = [
     "software engineer", "sde", "junior software engineer",
-    "associate software engineer", "software developer", "entry level software engineer",
-    # Full-Stack Family
-    "full stack developer", "mern developer", "web developer",
-    # Frontend Family
-    "frontend developer", "react developer", "javascript developer", "typescript developer",
-    # Backend Family
-    "backend developer", "node.js developer", "api developer",
-    # AI Family
+    "associate software engineer", "software developer", "entry level software engineer"
+]
+FULL_STACK_TERMS = [
+    "full stack developer", "mern developer", "web developer"
+]
+FRONTEND_TERMS = [
+    "frontend developer", "react developer", "javascript developer", "typescript developer"
+]
+BACKEND_TERMS = [
+    "backend developer", "node.js developer", "api developer"
+]
+AI_TERMS = [
     "ai engineer", "generative ai engineer"
 ]
+
+COMMON_SEARCH_TERMS = NORMAL_SDE_TERMS + FULL_STACK_TERMS + FRONTEND_TERMS + BACKEND_TERMS + AI_TERMS
 
 COMMON_LOCATIONS = ["Pune", "Bengaluru", "Hyderabad", "Gurugram", "Remote", "India"]
 
@@ -208,7 +213,7 @@ ROLE_MATCH_TERMS = [
     "associate software engineer", "graduate software engineer", "entry level software engineer",
     "entry-level software engineer", "junior software developer", "graduate software developer",
     "software engineer trainee", "graduate engineer trainee", "GET", "software development engineer trainee",
-    "developer", "web developer", "full stack developer", "full-stack developer", "full stack engineer",
+    "web developer", "full stack developer", "full-stack developer", "full stack engineer",
     "full-stack engineer", "fullstack developer", "fullstack engineer", "MERN developer",
     "MERN stack developer", "frontend developer", "front-end developer", "frontend engineer",
     "front-end engineer", "React developer", "React.js developer", "React engineer", "Next.js developer",
@@ -231,12 +236,12 @@ PREFERRED_LOCATIONS = [
     "Pune", "Hinjewadi", "Kharadi", "Hadapsar", "Magarpatta", "Baner", "Wakad", "Viman Nagar", "Kothrud", "Pimpri-Chinchwad",
     "Bengaluru", "Hyderabad", "Gurugram", "Remote"
 ]
+NAUKRI_SEARCH_LOCATIONS = ["Pune", "Bengaluru", "Hyderabad", "Gurugram"]
 NON_PREFERRED_LOCATION_SIGNALS = ["united states", "usa", "canada", "uk", "united kingdom", "australia", "germany", "france", "singapore", "dubai", "uae", "europe"]
 
 EDUCATION_OPEN_SIGNALS = [
     "any engineering branch", "all engineering branches", "any branch", "any degree", "bachelor's degree",
-    "bachelors degree", "engineering degree", "technology or engineering", "computer science or related field",
-    "b.tech", "b.e."
+    "bachelors degree", "engineering degree", "technology or engineering", "computer science or related field"
 ]
 FRESHNESS_DAYS = int(os.environ.get("PREFILTER_FRESHNESS_DAYS", "30"))
 

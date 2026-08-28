@@ -38,7 +38,7 @@ class NaukriSource(JobSource):
         consecutive_block_failures = 0
 
         for term in config.NAUKRI_SEARCH_TERMS:
-            for location in config.PREFERRED_LOCATIONS:
+            for location in getattr(config, "NAUKRI_SEARCH_LOCATIONS", ["Pune", "Bengaluru", "Hyderabad", "Gurugram"]):
                 if consecutive_block_failures >= breaker_threshold:
                     log.warning(f"Naukri API blocked (HTTP 406 Not Acceptable) after {consecutive_block_failures} consecutive failures. Stopping further requests.")
                     return rows

@@ -20,6 +20,11 @@ log = get_logger("jobspy")
 
 import threading
 import hashlib
+from datetime import datetime
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
 from concurrent.futures import Future
 
 _cached_df = None
@@ -34,7 +39,9 @@ def _get_google_query(term: str, location: str) -> str:
         f"{term} hiring {location}",
         f"{term} walk-in {location}",
     ]
-    idx = int(hashlib.md5(f"{term}:{location}".encode()).hexdigest(), 16) % len(forms)
+    # Rotate queries deterministically based on today's Indian date
+    run_date = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+    idx = int(hashlib.md5(f"{term}:{location}:{run_date}".encode()).hexdigest(), 16) % len(forms)
     return forms[idx]
 
 def _scrape_one_combo(term: str, location: str):
@@ -85,8 +92,22 @@ def fetch_all_jobspy_listings() -> pd.DataFrame:
     try:
         max_combinations = max(1, int(config.JOBSPY_MAX_COMBINATIONS))
         
-        # Distribute combinations round-robin across locations to prevent starvation
-        pools = [[(term, loc) for term in config.SEARCH_TERMS] for loc in config.LOCATIONS]
+        # Build intent families
+        families = [
+            getattr(config, "NORMAL_SDE_TERMS", ["software engineer"]),
+            getattr(config, "FULL_STACK_TERMS", ["full stack developer"]),
+            getattr(config, "FRONTEND_TERMS", ["frontend developer"]),
+            getattr(config, "BACKEND_TERMS", ["backend developer"]),
+            getattr(config, "AI_TERMS", ["ai engineer"]),
+            getattr(config, "WALKIN_SEARCH_TERMS", ["walk-in software engineer"])
+        ]
+        
+        # Distribute combinations round-robin across BOTH families and locations to prevent starvation
+        pools = []
+        for location in config.LOCATIONS:
+            for family in families:
+                pools.append([(term, location) for term in family])
+                
         combinations = []
         idx = 0
         while len(combinations) < max_combinations and any(pools):

@@ -158,8 +158,21 @@ def _parse_experience(text: str) -> dict:
     return res
 
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
+
 def _contains_any(text: str, terms: list[str]) -> list[str]:
     return [term for term in terms if term.lower() in text]
+
+def _contains_any_word(text: str, terms: list[str]) -> list[str]:
+    found = []
+    for term in terms:
+        pattern = r'\b' + re.escape(term.lower()) + r'\b'
+        if re.search(pattern, text):
+            found.append(term)
+    return found
 
 
 def _location_score(text: str) -> tuple[int, bool]:
@@ -196,10 +209,11 @@ def _freshness_score(listing: JobListing) -> tuple[int, bool]:
     if not match:
         return 0, False
     try:
-        posted = datetime.strptime(match.group(1), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        posted = datetime.strptime(match.group(1), "%Y-%m-%d").date()
     except ValueError:
         return 0, False
-    age_days = (datetime.now(timezone.utc) - posted).days
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    age_days = (today - posted).days
     if age_days < 0:
         return 1, False
     if age_days <= 3:
@@ -224,8 +238,8 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     if seniority_hits >= 2 or not exp_info["eligible_for_rahul"]:
         return 0
 
-    role_hits = _contains_any(title, config.ROLE_MATCH_TERMS)
-    description_role_hits = _contains_any(description, config.ROLE_MATCH_TERMS)
+    role_hits = _contains_any_word(title, config.ROLE_MATCH_TERMS)
+    description_role_hits = _contains_any_word(description, config.ROLE_MATCH_TERMS)
     core_tech_hits = _contains_any(full_text, config.CORE_TECH_TERMS)
     
     if not role_hits and not description_role_hits:
@@ -255,19 +269,39 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     score += education_points
     score += freshness_points
 
-    # Walk-in Scoring
+    # Walk-in Scoring & Deterministic Detection
     is_walkin = _contains_any(full_text, config.WALKIN_POSITIVE_SIGNALS)
     has_negative_walkin = _contains_any(full_text, config.WALKIN_NEGATIVE_SIGNALS)
     is_pune = _contains_any(full_text, config.PUNE_NEIGHBORHOODS)
     
-    # Require strong software engineering signal to grant the massive walk-in boost
-    has_strong_role = len(role_hits) > 0 or (len(description_role_hits) > 0 and len(core_tech_hits) > 0)
-    
-    if is_walkin and not has_negative_walkin and has_strong_role:
-        if getattr(config, "WALKIN_PRIORITY_ENABLED", True):
-            score += 15
-            if is_pune and getattr(config, "PUNE_WALKIN_PRIORITY", True):
-                score += 35  # Massive boost for Pune walk-ins
+    if is_walkin and not has_negative_walkin:
+        # Check explicit dates in JD text early to reject expired walk-ins deterministically
+        # Search for common date formats like 2024-03-24, 24th March, 24-03-2024
+        # Since LLM is bypassed for rejection, we use standard regexes.
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        date_pattern = r"\b(?:20\d{2}[-/]\d{2}[-/]\d{2}|\d{1,2}[-/]\d{1,2}[-/]20\d{2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+20\d{2})\b"
+        matches = re.findall(date_pattern, description)
+        
+        # If we find a date, we try to parse it (very roughly) just to see if it's expired
+        for match_str in matches:
+            try:
+                from dateutil import parser
+                parsed_date = parser.parse(match_str, fuzzy=True).date()
+                if (today - parsed_date).days > 0:
+                    # Found a date in the past, highly likely an expired walk-in
+                    # Reject it immediately
+                    return 0
+            except Exception:
+                pass
+                
+        # Require strong software engineering signal to grant the massive walk-in boost
+        has_strong_role = len(role_hits) > 0 or (len(description_role_hits) > 0 and len(core_tech_hits) > 0)
+        
+        if has_strong_role:
+            if getattr(config, "WALKIN_PRIORITY_ENABLED", True):
+                score += 15
+                if is_pune and getattr(config, "PUNE_WALKIN_PRIORITY", True):
+                    score += 35  # Massive boost for Pune walk-ins
             
     if getattr(config, "FRESHER_ONLY_MODE", False) and not fresher_hits:
         return 0
@@ -420,19 +454,21 @@ def _apply_verdict(listing: JobListing, verdict: FitVerdict) -> bool:
             match = re.search(r"(\d{4}-\d{2}-\d{2})", raw_date)
             try:
                 wd = datetime.strptime(match.group(1), "%Y-%m-%d").date()
-                today = datetime.now(timezone.utc).date()
+                today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
                 age = (today - wd).days
                 listing.walkin_date = match.group(1)
                 
                 if age > 0:
                     listing.verification_status = "expired"
                     # Expired walk-ins cannot be surfaced as high priority
-                    if age > getattr(config, "WALKIN_MAX_AGE_DAYS", 30):
-                        listing.fit_score = 0
-                        listing.fresher_appropriate = False
-                        listing.reason = "Walk-in drive has expired."
-                        listing.fit_tier = "Reject"
-                        return False
+                    # But the prompt specifically says:
+                    # "past date -> expired -> reject from actionable results"
+                    # Reject it immediately
+                    listing.fit_score = 0
+                    listing.fresher_appropriate = False
+                    listing.reason = "Walk-in drive has expired."
+                    listing.fit_tier = "Reject"
+                    return False
                 elif age == 0:
                     listing.verification_status = "active"
                 else:

@@ -114,13 +114,13 @@ def test_old_dated_listing_is_rejected():
 def test_email_in_description_still_boosts_score():
     base = JobListing(
         job_url="x",
-        title="Junior Developer",
+        title="Junior Software Developer",
         description="React Node.js fresher",
         location="Bengaluru, India",
     )
     with_email = JobListing(
         job_url="y",
-        title="Junior Developer",
+        title="Junior Software Developer",
         description="React Node.js fresher hr@company.com",
         location="Bengaluru, India",
     )
