@@ -81,7 +81,7 @@ EVALUATION INSTRUCTIONS
 - Company/industry preferences are a modest factor, not a standalone rejection reason.
 - If a material requirement cannot be verified, say so in gaps instead of assuming it.
 - Reasons and gaps must mention specific candidate/JD evidence.
-- WALK-IN DETECTION: If the JD mentions a walk-in drive, hiring drive, or offline interview, set is_walkin to true. Extract walkin_date, walkin_end_date, reporting_time, venue, contact_person, and registration_required. Set verification_status to 'active', 'upcoming', or 'expired' based on the date.
+- WALK-IN DETECTION: If the JD mentions a walk-in/hiring drive, set is_walkin to true and extract walkin_date and venue.
 
 SCORING
 =======
@@ -124,12 +124,7 @@ stays well within the output token budget and is never truncated mid-JSON.
   "gaps": ["specific gap or uncertainty"],
   "is_walkin": false,
   "walkin_date": "",
-  "walkin_end_date": "",
-  "reporting_time": "",
-  "venue": "",
-  "contact_person": "",
-  "registration_required": false,
-  "verification_status": ""
+  "venue": ""
 }}
 """
 
@@ -164,7 +159,7 @@ def _parse_experience(text: str) -> dict:
 
 
 def _contains_any(text: str, terms: list[str]) -> list[str]:
-    return [term for term in terms if term in text]
+    return [term for term in terms if term.lower() in text]
 
 
 def _location_score(text: str) -> tuple[int, bool]:
@@ -182,6 +177,12 @@ def _location_score(text: str) -> tuple[int, bool]:
 
 def _education_score(text: str) -> tuple[int, bool]:
     normalized = text.lower()
+    
+    # Reject explicit strict CS-only requirements
+    cs_only_pattern = r"(computer science|cs|b\.tech in cs|b\.tech cs|it) only\b|strictly (computer science|cs)\b"
+    if re.search(cs_only_pattern, normalized):
+        return 0, True
+
     if _contains_any(normalized, config.EDUCATION_OPEN_SIGNALS):
         return 4, False
     return 2, False
@@ -227,7 +228,7 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     description_role_hits = _contains_any(description, config.ROLE_MATCH_TERMS)
     core_tech_hits = _contains_any(full_text, config.CORE_TECH_TERMS)
     
-    if not role_hits and len(core_tech_hits) < 1:
+    if not role_hits and not description_role_hits:
         return 0
 
     location_points, location_hard_mismatch = _location_score(location)
@@ -257,7 +258,10 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     has_negative_walkin = _contains_any(full_text, config.WALKIN_NEGATIVE_SIGNALS)
     is_pune = "pune" in location or _contains_any(full_text, ["hinjewadi", "kharadi", "viman nagar", "magarpatta"])
     
-    if is_walkin and not has_negative_walkin:
+    # Require strong software engineering signal to grant the massive walk-in boost
+    has_strong_role = len(role_hits) > 0 or (len(description_role_hits) > 0 and len(core_tech_hits) > 0)
+    
+    if is_walkin and not has_negative_walkin and has_strong_role:
         score += 15
         if is_pune and getattr(config, "PUNE_WALKIN_PRIORITY", True):
             score += 35  # Massive boost for Pune walk-ins

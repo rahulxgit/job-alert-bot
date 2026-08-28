@@ -106,7 +106,7 @@ def _guess_company(title: str, url: str) -> str:
 
 def _guess_location(text: str) -> str:
     text_lower = text.lower()
-    for loc in config.FIRECRAWL_LOCATIONS + ["Hyderabad", "Gurgaon", "Gurugram", "Noida", "Delhi", "Mumbai", "Chennai", "Kolkata", "Remote"]:
+    for loc in config.PREFERRED_LOCATIONS:
         if loc.lower() in text_lower:
             return loc
     return "India"

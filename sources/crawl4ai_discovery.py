@@ -135,6 +135,13 @@ def _looks_job_url(url: str, title: str = "", text_signal: str = "") -> bool:
     )
     if any(re.search(pattern, low) for pattern in job_url_patterns):
         return True
+
+    # ATS-specific URL patterns where the path doesn't explicitly say "job"
+    parsed = urlparse(normalized)
+    host = parsed.netloc.lower()
+    path_segments = [part for part in parsed.path.strip("/").split("/") if part]
+    if ("jobs.lever.co" in host or "jobs.ashbyhq.com" in host) and len(path_segments) >= 2:
+        return True
         
     job_title_signal = any(token in title_low for token in (
         "software engineer", "developer", "sde", "frontend", "backend", "full stack",

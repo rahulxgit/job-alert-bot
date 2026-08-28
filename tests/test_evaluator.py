@@ -29,21 +29,41 @@ def test_fresher_role_scores_positive():
     assert keyword_prefilter_score(listing) > 0
 
 
-def test_unrelated_role_is_rejected_even_with_one_profile_keyword():
+def test_mechanical_design_engineer_with_python_is_rejected():
     listing = JobListing(
         job_url="x",
         title="Mechanical Design Engineer",
-        description="uses python and occasionally works with databases",
-        location="Bengaluru, India",
+        description="Python database SQL",
+        location="Pune, India",
     )
     assert keyword_prefilter_score(listing) == 0
 
 
-def test_multiple_core_technologies_can_pass_without_exact_role_title():
+def test_software_engineer_with_python_is_eligible():
     listing = JobListing(
         job_url="x",
-        title="Web Application Specialist",
-        description="React, Node.js, Express, MongoDB, REST API, fresher friendly",
+        title="Software Engineer",
+        description="Python fresher friendly",
+        location="Pune, India",
+    )
+    assert keyword_prefilter_score(listing) >= config.MIN_LIGHTWEIGHT_SCORE
+
+
+def test_electrical_engineer_with_sql_is_rejected():
+    listing = JobListing(
+        job_url="x",
+        title="Electrical Engineer",
+        description="SQL database backend experience required",
+        location="Pune, India",
+    )
+    assert keyword_prefilter_score(listing) == 0
+
+
+def test_backend_engineer_with_sql_is_eligible():
+    listing = JobListing(
+        job_url="x",
+        title="Backend Engineer",
+        description="SQL database fresher friendly",
         location="Pune, India",
     )
     assert keyword_prefilter_score(listing) >= config.MIN_LIGHTWEIGHT_SCORE

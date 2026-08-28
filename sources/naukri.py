@@ -40,7 +40,8 @@ class NaukriSource(JobSource):
         for term in config.NAUKRI_SEARCH_TERMS:
             for location in config.PREFERRED_LOCATIONS:
                 if consecutive_block_failures >= breaker_threshold:
-                    raise RuntimeError(f"Naukri API blocked (HTTP 406 Not Acceptable) after {consecutive_block_failures} consecutive failures")
+                    log.warning(f"Naukri API blocked (HTTP 406 Not Acceptable) after {consecutive_block_failures} consecutive failures. Stopping further requests.")
+                    return rows
 
                 params = {
                     "noOfResults": 20, "urlType": "search_by_key_loc", "searchType": "adv",

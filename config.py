@@ -51,10 +51,7 @@ WALKIN_NEGATIVE_SIGNALS = [
     "technical support", "service desk", "manual testing", "data entry"
 ]
 
-PUNE_WALKIN_COMPANY_SEEDS = [
-    "PletraTech", "Pratiti Technologies", "MultiGenesys", "Neilsoft",
-    "AccioJob", "HummingBird Technologies", "VibrantMinds", "Infosys BPM"
-]
+
 
 # --- Environmental Toggles ---
 HOURS_OLD = int(os.environ.get("HOURS_OLD", "168"))
@@ -157,7 +154,7 @@ CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS = [
     "cutshort.io", "www.cutshort.io", "foundit.in", "www.foundit.in",
     "hirist.tech", "www.hirist.tech", "instahyre.com", "www.instahyre.com",
     "hiringcafe.com", "www.hiringcafe.com", "boards.greenhouse.io", "jobs.ashbyhq.com",
-    "ycombinator.com", "www.ycombinator.com", "linkedin.com", "www.linkedin.com"
+    "jobs.lever.co", "ycombinator.com", "www.ycombinator.com", "linkedin.com", "www.linkedin.com"
 ]
 
 CRAWL4AI_DISCOVERY_SEED_CONCURRENCY = int(os.environ.get("CRAWL4AI_DISCOVERY_SEED_CONCURRENCY", "4"))
