@@ -6,8 +6,8 @@ to read and safe to import from anywhere without side effects.
 import os
 
 # --- Common Search Parameters ---
-COMMON_SEARCH_TERMS = ["Software Engineer"]
-COMMON_LOCATIONS = ["Pune", "Bengaluru", "India", "PAN India"]
+COMMON_SEARCH_TERMS = ["Software Engineer Walk in", "Developer Walk in", "IT Walk in", "Software Engineer Walk-in"]
+COMMON_LOCATIONS = ["Pune"]
 
 # --- jobspy (LinkedIn/Google) ---
 SEARCH_TERMS = COMMON_SEARCH_TERMS
@@ -165,7 +165,7 @@ ROLE_MATCH_TERMS = [
     "mern stack developer", "react developer", "react.js developer", "node.js developer",
     "javascript developer", "typescript developer", "product engineer", "application developer",
     "associate software engineer", "graduate software engineer", "junior software engineer",
-    "junior developer", "web developer",
+    "junior developer", "web developer", "developer walk", "it walk", "fresher walk"
 ]
 CORE_TECH_TERMS = [
     "react", "react.js", "reactjs", "node", "node.js", "express", "express.js", "javascript",

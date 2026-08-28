@@ -209,6 +209,11 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     location = (listing.location or "").lower()
     full_text = f"{title} {description} {company} {location}"
 
+    # Strict Walk-in requirement
+    walk_in_terms = ["walk in", "walk-in", "walkin", "walk - in"]
+    if not _contains_any(full_text, walk_in_terms):
+        return 0
+
     seniority_hits = sum(term in title for term in config.SENIORITY_EXCLUSIONS) * 2
     seniority_hits += sum(term in description for term in config.SENIORITY_EXCLUSIONS)
     exp_info = _parse_experience(description)
