@@ -44,6 +44,16 @@ class JobListing:
     fit_tier: str = ""
     gaps: list[str] = field(default_factory=list)
 
+    # Walk-in specifics
+    is_walkin: bool = False
+    walkin_date: str = ""
+    walkin_end_date: str = ""
+    reporting_time: str = ""
+    venue: str = ""
+    contact_person: str = ""
+    registration_required: bool = False
+    verification_status: str = ""
+
     def __post_init__(self) -> None:
         # External job sources occasionally return list-valued location/company
         # fields. Normalize at the model boundary so one malformed listing
@@ -79,6 +89,16 @@ class FitVerdict:
     education_match: int = 0
     location_match: int = 0
     company_quality: int = 0
+
+    # Walk-in extraction fields
+    is_walkin: bool = False
+    walkin_date: str = ""
+    walkin_end_date: str = ""
+    reporting_time: str = ""
+    venue: str = ""
+    contact_person: str = ""
+    registration_required: bool = False
+    verification_status: str = ""
 
     decision: str = ""
     why: list[str] = field(default_factory=list)

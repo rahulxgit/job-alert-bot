@@ -74,13 +74,14 @@ EVALUATION INSTRUCTIONS
 - Direct evidence should score higher than merely adjacent/transferable evidence.
 - For technical fit, compare languages, frameworks, backend, databases, APIs, architecture, AI/LLM, cloud/devops, testing, tooling, and other concrete JD requirements.
 - For project fit, identify the most relevant canonical projects and concrete engineering evidence; do not reward project quantity alone.
-- For education fit, check degree/branch, graduation timing, CGPA constraints, and stated eligibility; do not assume a branch is accepted when the JD explicitly excludes it.
+- For education fit, check degree/branch, graduation timing, CGPA constraints, and stated eligibility; do not hard-exclude B.Tech Biomedical unless explicitly banned (many roles accept 'any engineering branch').
 - For experience fit, distinguish internship/production project evidence from full-time professional experience.
 - Leadership, achievements, and CP data can improve fit when relevant but cannot override hard eligibility failures.
 - Location fit must use the profile's actual preferences; do not invent relocation willingness.
 - Company/industry preferences are a modest factor, not a standalone rejection reason.
 - If a material requirement cannot be verified, say so in gaps instead of assuming it.
 - Reasons and gaps must mention specific candidate/JD evidence.
+- WALK-IN DETECTION: If the JD mentions a walk-in drive, hiring drive, or offline interview, set is_walkin to true. Extract walkin_date, walkin_end_date, reporting_time, venue, contact_person, and registration_required. Set verification_status to 'active', 'upcoming', or 'expired' based on the date.
 
 SCORING
 =======
@@ -92,6 +93,7 @@ education_match: 0-10
 location_match: 0-5
 company_quality: 0-5
 fit_score MUST equal the sum of these seven scores and be 0-100.
+If it is a walk-in drive in Pune for a software engineer role, boost location_match to 5 and role_match to 25.
 
 DECISION
 ========
@@ -119,7 +121,15 @@ stays well within the output token budget and is never truncated mid-JSON.
   "decision": "strong_match|good_match|weak_match|reject",
   "is_fresher_appropriate": true,
   "why": ["specific evidence"],
-  "gaps": ["specific gap or uncertainty"]
+  "gaps": ["specific gap or uncertainty"],
+  "is_walkin": false,
+  "walkin_date": "",
+  "walkin_end_date": "",
+  "reporting_time": "",
+  "venue": "",
+  "contact_person": "",
+  "registration_required": false,
+  "verification_status": ""
 }}
 """
 
@@ -172,8 +182,6 @@ def _location_score(text: str) -> tuple[int, bool]:
 
 def _education_score(text: str) -> tuple[int, bool]:
     normalized = text.lower()
-    if _contains_any(normalized, config.EDUCATION_HARD_EXCLUSION_SIGNALS):
-        return 0, True
     if _contains_any(normalized, config.EDUCATION_OPEN_SIGNALS):
         return 4, False
     return 2, False
@@ -209,11 +217,6 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     location = (listing.location or "").lower()
     full_text = f"{title} {description} {company} {location}"
 
-    # Strict Walk-in requirement
-    walk_in_terms = ["walk in", "walk-in", "walkin", "walk - in"]
-    if not _contains_any(full_text, walk_in_terms):
-        return 0
-
     seniority_hits = sum(term in title for term in config.SENIORITY_EXCLUSIONS) * 2
     seniority_hits += sum(term in description for term in config.SENIORITY_EXCLUSIONS)
     exp_info = _parse_experience(description)
@@ -248,6 +251,19 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     score += location_points
     score += education_points
     score += freshness_points
+
+    # Walk-in Scoring
+    is_walkin = _contains_any(full_text, config.WALKIN_POSITIVE_SIGNALS)
+    has_negative_walkin = _contains_any(full_text, config.WALKIN_NEGATIVE_SIGNALS)
+    is_pune = "pune" in location or _contains_any(full_text, ["hinjewadi", "kharadi", "viman nagar", "magarpatta"])
+    
+    if is_walkin and not has_negative_walkin:
+        score += 15
+        if is_pune and getattr(config, "PUNE_WALKIN_PRIORITY", True):
+            score += 35  # Massive boost for Pune walk-ins
+            
+    if getattr(config, "FRESHER_ONLY_MODE", False) and not fresher_hits:
+        return 0
 
     from utils.text import extract_email_from_text
     if extract_email_from_text(description):
@@ -383,6 +399,17 @@ def _apply_verdict(listing: JobListing, verdict: FitVerdict) -> bool:
     listing.fit_score = sum([listing.role_match, listing.experience_match, listing.technical_match, listing.project_match, listing.education_match, listing.location_match, listing.company_quality])
     listing.fresher_appropriate = getattr(verdict, "is_fresher_appropriate", False)
     listing.reason = getattr(verdict, "reason", "")
+    
+    # Walk-in fields
+    listing.is_walkin = getattr(verdict, "is_walkin", False)
+    listing.walkin_date = getattr(verdict, "walkin_date", "")
+    listing.walkin_end_date = getattr(verdict, "walkin_end_date", "")
+    listing.reporting_time = getattr(verdict, "reporting_time", "")
+    listing.venue = getattr(verdict, "venue", "")
+    listing.contact_person = getattr(verdict, "contact_person", "")
+    listing.registration_required = getattr(verdict, "registration_required", False)
+    listing.verification_status = getattr(verdict, "verification_status", "")
+    
     if isinstance(getattr(verdict, "why", None), list):
         listing.reason = "; ".join(verdict.why)
     if isinstance(getattr(verdict, "gaps", None), list):
