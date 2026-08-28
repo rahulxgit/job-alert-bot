@@ -123,7 +123,7 @@ stays well within the output token budget and is never truncated mid-JSON.
   "why": ["specific evidence"],
   "gaps": ["specific gap or uncertainty"],
   "is_walkin": false,
-  "walkin_date": "",
+  "walkin_date": "YYYY-MM-DD or empty",
   "venue": ""
 }}
 """
@@ -178,8 +178,8 @@ def _location_score(text: str) -> tuple[int, bool]:
 def _education_score(text: str) -> tuple[int, bool]:
     normalized = text.lower()
     
-    # Reject explicit strict CS-only requirements
-    cs_only_pattern = r"(computer science|cs|b\.tech in cs|b\.tech cs|it) only\b|strictly (computer science|cs)\b"
+    # Reject explicit strict CS-only requirements using robust bounded tokens
+    cs_only_pattern = r"\b(?:computer science|cs|b\.?tech in cs|b\.?tech cs|it|information technology)(?: graduates| candidates| engineers| students)? only\b|\bstrictly (?:computer science|cs|it)\b"
     if re.search(cs_only_pattern, normalized):
         return 0, True
 
@@ -243,11 +243,13 @@ def keyword_prefilter_score(listing: JobListing) -> int:
 
     fresher_hits = _contains_any(full_text, config.FRESHER_SIGNALS)
     support_hits = _contains_any(full_text, config.PROFILE_KEYWORDS)
+    infra_hits = _contains_any(full_text, getattr(config, "INFRASTRUCTURE_KEYWORDS", []))
     score = 0
     score += min(len(role_hits), 3) * 5
     score += min(len(description_role_hits), 3)
     score += min(len(core_tech_hits), 6) * 2
-    score += min(len(support_hits), 8)
+    # Cap infrastructure terms so they can't dominate the score
+    score += min(len(support_hits), 8) + min(len(infra_hits), 2)
     score += min(len(fresher_hits), 2) * 4
     score += location_points
     score += education_points
@@ -256,15 +258,16 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     # Walk-in Scoring
     is_walkin = _contains_any(full_text, config.WALKIN_POSITIVE_SIGNALS)
     has_negative_walkin = _contains_any(full_text, config.WALKIN_NEGATIVE_SIGNALS)
-    is_pune = "pune" in location or _contains_any(full_text, ["hinjewadi", "kharadi", "viman nagar", "magarpatta"])
+    is_pune = _contains_any(full_text, config.PUNE_NEIGHBORHOODS)
     
     # Require strong software engineering signal to grant the massive walk-in boost
     has_strong_role = len(role_hits) > 0 or (len(description_role_hits) > 0 and len(core_tech_hits) > 0)
     
     if is_walkin and not has_negative_walkin and has_strong_role:
-        score += 15
-        if is_pune and getattr(config, "PUNE_WALKIN_PRIORITY", True):
-            score += 35  # Massive boost for Pune walk-ins
+        if getattr(config, "WALKIN_PRIORITY_ENABLED", True):
+            score += 15
+            if is_pune and getattr(config, "PUNE_WALKIN_PRIORITY", True):
+                score += 35  # Massive boost for Pune walk-ins
             
     if getattr(config, "FRESHER_ONLY_MODE", False) and not fresher_hits:
         return 0
@@ -406,13 +409,39 @@ def _apply_verdict(listing: JobListing, verdict: FitVerdict) -> bool:
     
     # Walk-in fields
     listing.is_walkin = getattr(verdict, "is_walkin", False)
-    listing.walkin_date = getattr(verdict, "walkin_date", "")
-    listing.walkin_end_date = getattr(verdict, "walkin_end_date", "")
-    listing.reporting_time = getattr(verdict, "reporting_time", "")
+    raw_date = getattr(verdict, "walkin_date", "")
     listing.venue = getattr(verdict, "venue", "")
-    listing.contact_person = getattr(verdict, "contact_person", "")
-    listing.registration_required = getattr(verdict, "registration_required", False)
-    listing.verification_status = getattr(verdict, "verification_status", "")
+    
+    # Deterministic Walk-in Validation
+    if listing.is_walkin:
+        listing.verification_status = "unknown"
+        listing.walkin_date = ""
+        if raw_date and re.search(r"(\d{4}-\d{2}-\d{2})", raw_date):
+            match = re.search(r"(\d{4}-\d{2}-\d{2})", raw_date)
+            try:
+                wd = datetime.strptime(match.group(1), "%Y-%m-%d").date()
+                today = datetime.now(timezone.utc).date()
+                age = (today - wd).days
+                listing.walkin_date = match.group(1)
+                
+                if age > 0:
+                    listing.verification_status = "expired"
+                    # Expired walk-ins cannot be surfaced as high priority
+                    if age > getattr(config, "WALKIN_MAX_AGE_DAYS", 30):
+                        listing.fit_score = 0
+                        listing.fresher_appropriate = False
+                        listing.reason = "Walk-in drive has expired."
+                        listing.fit_tier = "Reject"
+                        return False
+                elif age == 0:
+                    listing.verification_status = "active"
+                else:
+                    listing.verification_status = "upcoming"
+            except ValueError:
+                pass
+    else:
+        listing.walkin_date = ""
+        listing.venue = ""
     
     if isinstance(getattr(verdict, "why", None), list):
         listing.reason = "; ".join(verdict.why)

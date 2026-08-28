@@ -83,19 +83,23 @@ def fetch_all_jobspy_listings() -> pd.DataFrame:
         return _fetch_future.result()
 
     try:
-        combinations = []
         max_combinations = max(1, int(config.JOBSPY_MAX_COMBINATIONS))
-        for term in config.SEARCH_TERMS:
-            for location in config.LOCATIONS:
-                if len(combinations) >= max_combinations:
-                    break
-                combinations.append((term, location))
-            if len(combinations) >= max_combinations:
-                break
+        
+        # Distribute combinations round-robin across locations to prevent starvation
+        pools = [[(term, loc) for term in config.SEARCH_TERMS] for loc in config.LOCATIONS]
+        combinations = []
+        idx = 0
+        while len(combinations) < max_combinations and any(pools):
+            pool = pools[idx % len(pools)]
+            if pool:
+                combinations.append(pool.pop(0))
+            idx += 1
 
         if not combinations:
             _cached_df = pd.DataFrame()
             _fetch_future.set_result(_cached_df)
+            with _fetch_lock:
+                _fetch_future = None
             return _cached_df
 
         configured_concurrency = int(os.environ.get("JOBSPY_MAX_CONCURRENCY", "4"))
@@ -132,15 +136,24 @@ def fetch_all_jobspy_listings() -> pd.DataFrame:
         if not all_results:
             _cached_df = pd.DataFrame()
             _fetch_future.set_result(_cached_df)
+            with _fetch_lock:
+                _fetch_future = None
             return _cached_df
 
         combined = pd.concat(all_results, ignore_index=True)
-        combined["source"] = combined.get("site", "jobspy").astype(str).str.capitalize()
+        site_col = combined.get("site")
+        if site_col is None:
+            site_col = pd.Series("jobspy", index=combined.index)
+        combined["source"] = site_col.fillna("jobspy").astype(str).str.capitalize()
         _cached_df = combined[["job_url", "title", "company", "location", "description", "source"]]
         _fetch_future.set_result(_cached_df)
+        with _fetch_lock:
+            _fetch_future = None
         return _cached_df
     except Exception as exc:
         _fetch_future.set_exception(exc)
+        with _fetch_lock:
+            _fetch_future = None
         raise
 
 

@@ -8,50 +8,43 @@ import os
 # --- Common Search Parameters ---
 COMMON_SEARCH_TERMS = [
     # Primary Role Family
-    "software engineer", "software development engineer", "sde", "sde 1",
-    "sde-1", "junior software engineer", "associate software engineer",
-    "graduate software engineer", "software developer", "junior software developer",
-    "entry level software engineer", "graduate engineer",
+    "software engineer", "sde", "junior software engineer",
+    "associate software engineer", "software developer", "entry level software engineer",
     # Full-Stack Family
-    "full stack developer", "full-stack developer", "full stack engineer",
-    "fullstack developer", "mern developer", "web developer",
+    "full stack developer", "mern developer", "web developer",
     # Frontend Family
-    "frontend developer", "front-end developer", "frontend engineer",
-    "react developer", "react.js developer", "javascript developer", "typescript developer",
+    "frontend developer", "react developer", "javascript developer", "typescript developer",
     # Backend Family
-    "backend developer", "back-end developer", "backend engineer",
-    "node.js developer", "api developer",
+    "backend developer", "node.js developer", "api developer",
     # AI Family
-    "ai engineer", "ai software engineer", "generative ai engineer"
+    "ai engineer", "generative ai engineer"
 ]
 
 COMMON_LOCATIONS = ["Pune", "Bengaluru", "Hyderabad", "Gurugram", "Remote", "India"]
 
+PUNE_NEIGHBORHOODS = [
+    "pune", "hinjewadi", "kharadi", "hadapsar", "viman nagar", "baner", 
+    "wakad", "magarpatta", "kothrud", "pimpri-chinchwad"
+]
+
 # --- Walk-in Specific Configuration ---
 WALKIN_SEARCH_TERMS = [
-    "software engineer walk-in", "software developer walk-in", "sde walk-in",
-    "sde 1 walk-in", "associate software engineer walk-in", "graduate software engineer walk-in",
-    "junior software engineer walk-in", "full stack developer walk-in", "frontend developer walk-in",
-    "backend developer walk-in", "react developer walk-in", "node.js developer walk-in",
-    "software engineer hiring drive", "software developer hiring drive", "sde hiring drive",
-    "fresher hiring drive", "off campus hiring drive", "walk-in interview software engineer",
-    "offline hiring drive software engineer", "direct walk-in software developer"
+    "software engineer walk-in", "sde walk-in", "fresher walk-in",
+    "full stack walk-in", "frontend walk-in", "backend walk-in", 
+    "react walk-in", "software engineer hiring drive", "fresher hiring drive", 
+    "off campus hiring drive", "walk-in interview software engineer", "direct walk-in developer"
 ]
-WALKIN_LOCATIONS = [
-    "Pune", "Hinjewadi Pune", "Kharadi Pune", "Hadapsar Pune", 
-    "Viman Nagar Pune", "Baner Pune", "Wakad Pune", "Magarpatta Pune", "Kothrud Pune"
-]
+WALKIN_LOCATIONS = ["Pune", "Bengaluru", "Hyderabad"]
+
 WALKIN_POSITIVE_SIGNALS = [
     "walk-in", "walk in", "walkin", "hiring drive", "walk-in drive",
     "offline hiring drive", "offline interview", "direct walk-in", "open interview",
-    "mega walk-in", "immediate joiner"
+    "mega walk-in"
 ]
 WALKIN_NEGATIVE_SIGNALS = [
     "customer support", "voice process", "non-it operations", "bpo",
     "technical support", "service desk", "manual testing", "data entry"
 ]
-
-
 
 # --- Environmental Toggles ---
 HOURS_OLD = int(os.environ.get("HOURS_OLD", "168"))
@@ -62,7 +55,7 @@ FRESHER_ONLY_MODE = os.environ.get("FRESHER_ONLY_MODE", "false").lower() == "tru
 
 # --- jobspy (LinkedIn/Google) ---
 SEARCH_TERMS = COMMON_SEARCH_TERMS + WALKIN_SEARCH_TERMS
-LOCATIONS = WALKIN_LOCATIONS + ["Bengaluru", "Hyderabad"]
+LOCATIONS = WALKIN_LOCATIONS + ["Remote", "India"]
 JOBSPY_SITES = ["linkedin", "google"]
 RESULTS_PER_SITE = int(os.environ.get("JOBSPY_RESULTS_PER_SITE", "15"))
 JOBSPY_CALL_TIMEOUT_SECONDS = int(os.environ.get("JOBSPY_CALL_TIMEOUT_SECONDS", "60"))
@@ -79,6 +72,7 @@ GREENHOUSE_BOARDS = {
     "affirm": "affirm", "brex": "brex", "webflow": "webflow"
 }
 
+# Lever is supported for Crawl4AI discovery, but not configured as a direct API board source here.
 LEVER_BOARDS = {}
 
 ARBEITNOW_KEYWORDS = COMMON_SEARCH_TERMS
@@ -98,18 +92,10 @@ FIRECRAWL_MAX_DETAIL_PAGES = int(os.environ.get("FIRECRAWL_MAX_DETAIL_PAGES", "5
 _CURATED_QUERIES = [
     "Pune walk-in SDE",
     "Pune walk-in software engineer",
-    "Pune walk-in software developer",
-    "Pune walk-in full stack",
-    "Pune walk-in React",
-    "Pune walk-in Node.js",
     "Pune hiring drive fresher",
     "Pune offline hiring software engineer",
     "Pune SDE fresher",
-    "Pune software engineer 0-1 years",
-    "Pune software developer 0-2 years",
-    "Pune associate software engineer Pune",
-    "Pune graduate software engineer",
-    "Pune junior software engineer"
+    "Pune software engineer 0-1 years"
 ]
 
 FIRECRAWL_SEARCH_QUERIES = _CURATED_QUERIES + [f"{role} fresher {loc}" for role in ["Software Engineer", "React Developer", "AI Engineer"] for loc in ["Bengaluru", "Hyderabad", "Gurugram", "Remote"]]
@@ -190,7 +176,10 @@ PROFILE_KEYWORDS = [
     "AI infrastructure", "RAG", "generative AI", "OpenAI", "Anthropic", "Claude", "Gemini",
     "Groq", "OpenRouter", "DeepSeek", "Mistral", "SSE", "Server-Sent Events", "Jest", "testing",
     "system design", "data structures", "algorithms", "DSA", "OOP", "DBMS", "operating systems",
-    "JWT", "authentication", "Cloudinary", "Multer", "bcrypt", "async processing", 
+    "JWT", "authentication", "Cloudinary", "Multer", "bcrypt", "async processing"
+]
+
+INFRASTRUCTURE_KEYWORDS = [
     "error classification", "failover", "provider routing", "token streaming"
 ]
 
