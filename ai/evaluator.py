@@ -286,7 +286,6 @@ RANGE_PATTERN = re.compile(
 )
 
 def _get_min_distance(patterns, text, match_center):
-    import re
     min_dist = float('inf')
     for p in patterns:
         for m in re.finditer(p, text, re.IGNORECASE):
@@ -303,9 +302,6 @@ def _extract_walkin_date(text: str) -> tuple[date | None, date | None]:
     normalized = " ".join(text.split()).replace("–", "-").replace("—", "-")
     candidates = []
     
-    import re
-    from dateutil import parser
-    from datetime import datetime
 
     def process_match(start, end, d1, d2):
         match_center = (start + end) / 2
@@ -573,12 +569,17 @@ def _apply_verdict(listing: JobListing, verdict: FitVerdict) -> bool:
                     valid_date = wd
                 elif start_date and end_date and start_date <= wd <= end_date:
                     valid_date = wd
-                elif start_date and end_date:
+                elif start_date and wd == start_date:
+                    valid_date = wd
+                else:
                     valid_date = start_date
+                    listing.walkin_date_conflict = True
             except ValueError:
                 pass
         elif start_date:
             valid_date = start_date
+            if raw_date and start_date.strftime("%Y-%m-%d") != raw_date:
+                listing.walkin_date_conflict = True
 
         if valid_date:
             today = datetime.now(IST).date()
