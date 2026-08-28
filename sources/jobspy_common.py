@@ -23,11 +23,23 @@ import threading
 _cached_df = None
 _fetch_lock = threading.Lock()
 
+import random
+
+def _get_google_query(term: str, location: str) -> str:
+    forms = [
+        f"{term} fresher jobs {location}",
+        f"{term} 0-2 years {location}",
+        f"{term} {location} fresher",
+        f"{term} hiring {location}",
+    ]
+    return random.choice(forms)
+
 def _scrape_one_combo(term: str, location: str):
+    google_term = _get_google_query(term, location)
     return scrape_jobs(
         site_name=config.JOBSPY_SITES,
         search_term=term,
-        google_search_term=f"{term} fresher jobs {location}",
+        google_search_term=google_term,
         location=location,
         results_wanted=config.RESULTS_PER_SITE,
         hours_old=config.HOURS_OLD,
