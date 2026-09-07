@@ -24,7 +24,8 @@ def test_listing_row_contains_only_sheet_scalars():
     )
     row = _listing_to_sheet_row(listing)
     assert all(isinstance(value, (str, int, float)) for value in row)
-    assert row[3] == "San Francisco"
+    # New 6-column layout: [link, company, fit_score, walkin_details, date, email]
+    assert row[1] == "Example"
 
 
 def test_log_new_jobs_writes_list_location_as_scalar():
@@ -38,7 +39,7 @@ def test_log_new_jobs_writes_list_location_as_scalar():
     )
     log_new_jobs(sheet, [listing])
     rows = sheet.append_rows.call_args.args[0]
-    assert rows[0][3] == "San Francisco"
+    assert rows[0][1] == "Example"
 
 
 def test_parse_json_object_handles_fenced_and_surrounded_json():

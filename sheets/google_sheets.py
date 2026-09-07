@@ -77,31 +77,56 @@ def _sheet_value(value: Any) -> str | int | float:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     return str(value)
 
+def _walkin_details(listing: JobListing) -> str:
+    """Combine walk-in date/venue/timing into a single readable column."""
+    if not getattr(listing, "is_walkin", False):
+        return ""
+    parts = []
+    date = getattr(listing, "walkin_date", "") or ""
+    end_date = getattr(listing, "walkin_end_date", "") or ""
+    if date and end_date and end_date != date:
+        parts.append(f"{date} to {end_date}")
+    elif date:
+        parts.append(date)
+    reporting_time = getattr(listing, "reporting_time", "") or ""
+    if reporting_time:
+        parts.append(f"@ {reporting_time}")
+    venue = getattr(listing, "venue", "") or ""
+    if venue:
+        parts.append(f"Venue: {venue}")
+    return " | ".join(parts) if parts else "Walk-in (details unspecified)"
+
+
 def _listing_to_sheet_row(listing: JobListing) -> list[str | int | float]:
+    # Column order: Link stays first so get_seen_urls (col_values(1)) keeps working.
     return [
         _sheet_value(listing.job_url),
-        _sheet_value(listing.title),
         _sheet_value(listing.company),
-        _sheet_value(listing.location),
         _sheet_value(int(listing.fit_score)),
-        _sheet_value(listing.fit_tier),
-        _sheet_value(listing.reason),
-        _sheet_value(listing.gaps),
-        _sheet_value(listing.role_match),
-        _sheet_value(listing.experience_match),
-        _sheet_value(listing.technical_match),
-        _sheet_value(listing.project_match),
-        _sheet_value(listing.education_match),
-        _sheet_value(listing.location_match),
+        _sheet_value(_walkin_details(listing)),
         _sheet_value(datetime.now().strftime("%Y-%m-%d %H:%M")),
         _sheet_value(listing.recruiter_email),
-        _sheet_value(listing.source or "Unknown"),
     ]
+
+SHEET_HEADER = ["Link", "Company", "Fit Score", "Walk-in Details", "Date Added", "Recruiter Email"]
+
+def ensure_header(sheet):
+    """Write the 6-column header if the sheet is empty or has a stale header."""
+    try:
+        if sheet is None:
+            return
+        first_row = sheet.row_values(1)
+        if first_row != SHEET_HEADER:
+            sheet.update("A1", [SHEET_HEADER])
+    except Exception as exc:
+        log.warning("Could not verify/write sheet header: %s", exc)
+
 
 def log_new_jobs(sheet, listings: list[JobListing]):
     if not listings:
         return
 
+    ensure_header(sheet)
     rows = [_listing_to_sheet_row(listing) for listing in listings]
     pending = _load_pending_queue()
     if pending:

@@ -1,9 +1,10 @@
 name: Daily Job Alert
 
 on:
-  schedule:
-    # 8:00 AM IST = 2:30 AM UTC
-    - cron: "30 2 * * *"
+  # Scheduled daily run is paused — re-enable by uncommenting the schedule block below.
+  # schedule:
+  #   # 8:00 AM IST = 2:30 AM UTC
+  #   - cron: "30 2 * * *"
   workflow_dispatch: {}
 
 concurrency:

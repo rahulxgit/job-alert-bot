@@ -1,0 +1,13 @@
+{
+  "configured_max_candidates": 300,
+  "admitted_candidates": 165,
+  "budget_seconds": 3300.0,
+  "concurrency": 6,
+  "estimated_latency_seconds": 90.0,
+  "safety_factor": 0.75,
+  "reliability_factor": 1.0,
+  "previous_attempted": 143,
+  "previous_unresolved": 0,
+  "previous_unresolved_ratio": 0.0,
+  "theoretical_capacity": 165
+}
