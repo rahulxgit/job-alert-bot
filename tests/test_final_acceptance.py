@@ -36,11 +36,13 @@ def test_acceptance_walkin_rejection_and_boost():
     yesterday = today - timedelta(days=1)
     tomorrow = today + timedelta(days=1)
 
-    listing_upcoming = JobListing(job_url="url", title="SDE", description=f"Walk-in drive. {tomorrow.strftime('%Y-%m-%d')}")
+    # FRESHER_ONLY_MODE defaults to True, so descriptions need a fresher signal to
+    # pass the gate at all — otherwise every walk-in scores 0 regardless of date.
+    listing_upcoming = JobListing(job_url="url", title="SDE", description=f"Walk-in drive for freshers. {tomorrow.strftime('%Y-%m-%d')}")
     score_upcoming = keyword_prefilter_score(listing_upcoming)
     assert score_upcoming > 0
     
-    listing_yesterday = JobListing(job_url="url", title="SDE", description=f"Walk-in drive. {yesterday.strftime('%Y-%m-%d')}")
+    listing_yesterday = JobListing(job_url="url", title="SDE", description=f"Walk-in drive for freshers. {yesterday.strftime('%Y-%m-%d')}")
     score_yesterday = keyword_prefilter_score(listing_yesterday)
     assert score_yesterday == 0
 

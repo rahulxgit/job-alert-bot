@@ -407,7 +407,10 @@ def keyword_prefilter_score(listing: JobListing) -> int:
     # Walk-in Scoring & Deterministic Detection
     is_walkin = _contains_any(full_text, config.WALKIN_POSITIVE_SIGNALS)
     has_negative_walkin = _contains_any(full_text, config.WALKIN_NEGATIVE_SIGNALS)
-    is_pune = _contains_any(full_text, config.PUNE_NEIGHBORHOODS)
+    # BUG FIX: use WALKIN_NEIGHBORHOODS (Pune + Bengaluru) instead of PUNE_NEIGHBORHOODS
+    # alone — Bengaluru is a configured walk-in location (config.WALKIN_LOCATIONS) but
+    # was getting zero priority boost here since this line only ever checked Pune.
+    is_pune = _contains_any(full_text, getattr(config, "WALKIN_NEIGHBORHOODS", config.PUNE_NEIGHBORHOODS))
     
     if is_walkin and not has_negative_walkin:
         # Check explicit dates in JD text early to reject expired walk-ins deterministically

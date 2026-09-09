@@ -20,10 +20,23 @@ BACKEND_TERMS = [
     "backend developer", "node.js developer", "api developer"
 ]
 AI_TERMS = [
-    "ai engineer", "generative ai engineer"
+    "ai engineer", "generative ai engineer", "ai-ml engineer", "machine learning engineer",
+    "ai developer", "ml engineer"
+]
+DOTNET_TERMS = [
+    ".net developer", "dot net developer", "asp.net developer", ".net full stack developer"
+]
+JAVA_TERMS = [
+    "java developer", "java full stack developer", "java backend developer"
+]
+JS_TERMS = [
+    "js developer", "javascript engineer", "node js developer"
 ]
 
-COMMON_SEARCH_TERMS = NORMAL_SDE_TERMS + FULL_STACK_TERMS + FRONTEND_TERMS + BACKEND_TERMS + AI_TERMS
+COMMON_SEARCH_TERMS = (
+    NORMAL_SDE_TERMS + FULL_STACK_TERMS + FRONTEND_TERMS + BACKEND_TERMS
+    + AI_TERMS + DOTNET_TERMS + JAVA_TERMS + JS_TERMS
+)
 
 COMMON_LOCATIONS = ["Pune", "Bengaluru", "Hyderabad", "Gurugram", "Remote", "India"]
 
@@ -31,15 +44,30 @@ PUNE_NEIGHBORHOODS = [
     "pune", "hinjewadi", "kharadi", "hadapsar", "viman nagar", "baner", 
     "wakad", "magarpatta", "kothrud", "pimpri-chinchwad"
 ]
+BENGALURU_NEIGHBORHOODS = [
+    "bengaluru", "bangalore", "koramangala", "whitefield", "electronic city",
+    "indiranagar", "hsr layout", "marathahalli", "outer ring road", "manyata tech park"
+]
+# Used by ai/evaluator.py's walk-in location boost so Pune AND Bengaluru walk-ins
+# get prioritized equally (previously only Pune neighborhoods were checked there).
+WALKIN_NEIGHBORHOODS = PUNE_NEIGHBORHOODS + BENGALURU_NEIGHBORHOODS
 
 # --- Walk-in Specific Configuration ---
-WALKIN_SEARCH_TERMS = [
-    "software engineer walk-in", "sde walk-in", "fresher walk-in",
-    "full stack walk-in", "frontend walk-in", "backend walk-in", 
-    "react walk-in", "software engineer hiring drive", "fresher hiring drive", 
-    "off campus hiring drive", "walk-in interview software engineer", "direct walk-in developer"
+# Built from every role category so walk-in search covers full stack, frontend,
+# backend, AI/ML, .NET, Java, and JS roles for freshers — not just generic "SDE".
+WALKIN_ROLE_TERMS = (
+    NORMAL_SDE_TERMS + FULL_STACK_TERMS + FRONTEND_TERMS + BACKEND_TERMS
+    + AI_TERMS + DOTNET_TERMS + JAVA_TERMS + JS_TERMS
+)
+WALKIN_SEARCH_TERMS = [f"{role} walk-in" for role in WALKIN_ROLE_TERMS] + [
+    "software engineer hiring drive", "fresher hiring drive",
+    "off campus hiring drive", "walk-in interview software engineer",
+    "direct walk-in developer", "startup walk-in drive fresher",
+    "early stage startup walk-in hiring"
 ]
-WALKIN_LOCATIONS = ["Pune", "Bengaluru", "Hyderabad"]
+# Pune + Bengaluru only for walk-in-specific search (you live in Pune, so it's
+# prioritized first wherever ordering matters downstream).
+WALKIN_LOCATIONS = ["Pune", "Bengaluru"]
 
 WALKIN_POSITIVE_SIGNALS = [
     "walk-in", "walk in", "walkin", "hiring drive", "walk-in drive",
@@ -56,11 +84,15 @@ HOURS_OLD = int(os.environ.get("HOURS_OLD", "168"))
 WALKIN_MAX_AGE_DAYS = int(os.environ.get("WALKIN_MAX_AGE_DAYS", "30"))
 WALKIN_PRIORITY_ENABLED = os.environ.get("WALKIN_PRIORITY_ENABLED", "true").lower() == "true"
 PUNE_WALKIN_PRIORITY = os.environ.get("PUNE_WALKIN_PRIORITY", "true").lower() == "true"
-FRESHER_ONLY_MODE = os.environ.get("FRESHER_ONLY_MODE", "false").lower() == "true"
+FRESHER_ONLY_MODE = os.environ.get("FRESHER_ONLY_MODE", "true").lower() == "true"
 
 # --- jobspy (LinkedIn/Google) ---
+# NOTE: jobspy does a term x location cross-product, so walk-in terms will still
+# occasionally match in Hyderabad/Gurugram/Remote since they share this combo list
+# with regular search terms. True walk-in-only Pune/Bengaluru scoping happens
+# downstream in ai/evaluator.py via WALKIN_LOCATIONS/WALKIN_NEIGHBORHOODS.
 SEARCH_TERMS = COMMON_SEARCH_TERMS + WALKIN_SEARCH_TERMS
-LOCATIONS = WALKIN_LOCATIONS + ["Remote", "India"]
+LOCATIONS = WALKIN_LOCATIONS + ["Hyderabad", "Gurugram", "Remote", "India"]
 JOBSPY_SITES = ["linkedin", "google"]
 RESULTS_PER_SITE = int(os.environ.get("JOBSPY_RESULTS_PER_SITE", "15"))
 JOBSPY_CALL_TIMEOUT_SECONDS = int(os.environ.get("JOBSPY_CALL_TIMEOUT_SECONDS", "60"))
@@ -68,7 +100,10 @@ JOBSPY_MAX_COMBINATIONS = int(os.environ.get("JOBSPY_MAX_COMBINATIONS", "24"))
 
 INTERNSHALA_SEARCH_TERMS = COMMON_SEARCH_TERMS
 NAUKRI_SEARCH_TERMS = COMMON_SEARCH_TERMS
-WELLFOUND_ROLE_SLUGS = [term.lower().replace(' ', '-') for term in ["software engineer", "full stack developer", "react developer", "node developer", "ai engineer"]]
+WELLFOUND_ROLE_SLUGS = [term.lower().replace(' ', '-') for term in [
+    "software engineer", "full stack developer", "react developer", "node developer",
+    "ai engineer", "machine learning engineer", "java developer", "frontend developer"
+]]
 
 GREENHOUSE_BOARDS = {
     "postman": "postman", "groww": "groww", "gitlab": "gitlab", "grafanalabs": "grafanalabs", 
@@ -93,14 +128,18 @@ FIRECRAWL_MAX_AGGREGATE_EXPANSIONS = int(os.environ.get("FIRECRAWL_MAX_AGGREGATE
 FIRECRAWL_MAX_LINKS_PER_AGGREGATE = int(os.environ.get("FIRECRAWL_MAX_LINKS_PER_AGGREGATE", "5"))
 FIRECRAWL_MAX_DETAIL_PAGES = int(os.environ.get("FIRECRAWL_MAX_DETAIL_PAGES", "50"))
 
-# Curated High-Priority Firecrawl Queries
+# Curated High-Priority Firecrawl Queries — Pune first (you live there), then
+# Bengaluru, plus a startup/early-stage track. No hardcoded company names.
 _CURATED_QUERIES = [
-    "Pune walk-in SDE",
-    "Pune walk-in software engineer",
-    "Pune hiring drive fresher",
-    "Pune offline hiring software engineer",
-    "Pune SDE fresher",
-    "Pune software engineer 0-1 years"
+    "Pune walk-in SDE", "Pune walk-in software engineer", "Pune hiring drive fresher",
+    "Pune offline hiring software engineer", "Pune SDE fresher", "Pune software engineer 0-1 years",
+    "Pune walk-in java developer", "Pune walk-in .net developer", "Pune walk-in full stack developer fresher",
+    "Bengaluru walk-in SDE", "Bengaluru walk-in software engineer", "Bengaluru hiring drive fresher",
+    "Bengaluru offline hiring software engineer", "Bengaluru fresher walk-in developer",
+    "Bengaluru walk-in java developer", "Bengaluru walk-in .net developer",
+    "Bengaluru walk-in full stack developer fresher",
+    "startup walk-in hiring drive fresher Pune", "startup walk-in hiring drive fresher Bengaluru",
+    "early stage startup fresher hiring Pune Bengaluru"
 ]
 
 FIRECRAWL_SEARCH_QUERIES = _CURATED_QUERIES + [f"{role} fresher {loc}" for role in ["Software Engineer", "React Developer", "AI Engineer"] for loc in ["Bengaluru", "Hyderabad", "Gurugram", "Remote"]]
@@ -114,7 +153,7 @@ CRAWL4AI_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_MAX_DETAIL_PAGES", "25"
 CRAWL4AI_MIN_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_MIN_DESCRIPTION_CHARS", "300"))
 CRAWL4AI_DISCOVERY_ENABLED = os.environ.get("CRAWL4AI_DISCOVERY_ENABLED", "true").lower() == "true"
 CRAWL4AI_DISCOVERY_TIMEOUT = int(os.environ.get("CRAWL4AI_DISCOVERY_TIMEOUT", "30"))
-CRAWL4AI_DISCOVERY_MAX_SEEDS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_SEEDS", "20"))
+CRAWL4AI_DISCOVERY_MAX_SEEDS = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_SEEDS", "28"))
 CRAWL4AI_DISCOVERY_MAX_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_PAGES", "100"))
 CRAWL4AI_DISCOVERY_MAX_DEPTH = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DEPTH", "2"))
 CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES = int(os.environ.get("CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES", "1000"))
@@ -123,15 +162,36 @@ CRAWL4AI_DISCOVERY_MAX_DESCRIPTION_CHARS = int(os.environ.get("CRAWL4AI_DISCOVER
 CRAWL4AI_DISCOVERY_LOCATIONS = COMMON_LOCATIONS
 
 CRAWL4AI_DISCOVERY_SEED_URLS = [
+    # Pune first — you live there, so these get crawled before anything else if the
+    # seed cap is ever hit.
     "https://www.naukri.com/software-engineer-fresher-jobs-in-pune",
     "https://www.naukri.com/walkin-software-developer-jobs-in-pune",
     "https://in.indeed.com/jobs?q=Software+Engineer+Walk+In&l=Pune",
     "https://in.indeed.com/jobs?q=Fresher+Software+Engineer&l=Pune",
     "https://internshala.com/jobs/software-engineering-jobs-in-pune/",
-    "https://wellfound.com/jobs",
     "https://cutshort.io/jobs/software-engineer-jobs-in-pune",
     "https://www.foundit.in/srp/results?query=Software+Engineer+Walk+in&locations=Pune",
     "https://www.hirist.tech/search/software-engineer-pune",
+    "https://www.freshersworld.com/jobs/category/walkin-job-vacancies-pune",
+    "https://www.workindia.in/jobs-in-pune/",
+    # Bengaluru — same set, mirrored
+    "https://www.naukri.com/software-engineer-fresher-jobs-in-bangalore",
+    "https://www.naukri.com/walkin-software-developer-jobs-in-bangalore",
+    "https://in.indeed.com/jobs?q=Software+Engineer+Walk+In&l=Bengaluru",
+    "https://in.indeed.com/jobs?q=Fresher+Software+Engineer&l=Bengaluru",
+    "https://internshala.com/jobs/software-engineering-jobs-in-bangalore/",
+    "https://cutshort.io/jobs/software-engineer-jobs-in-bangalore",
+    "https://www.foundit.in/srp/results?query=Software+Engineer+Walk+in&locations=Bengaluru",
+    "https://www.hirist.tech/search/software-engineer-bangalore",
+    # Dedicated walk-in-drive aggregators — not city-specific pages, but cover both
+    # cities within their listings; discovered jobs still get filtered by
+    # WALKIN_NEIGHBORHOODS downstream in ai/evaluator.py.
+    "https://www.freshersvoice.com/latest-walk-in-drives",
+    "https://careerforfreshers.com/walk-in-jobs/",
+    "https://www.fresherstech.com/walkin-drive-jobs/",
+    "https://freshershunt.in/off-campus-drive-jobs/off-campus-drive/",
+    # Not location-scoped — startup/YC/general boards
+    "https://wellfound.com/jobs",
     "https://www.instahyre.com/search-jobs/",
     "https://hiringcafe.com/",
     "https://boards.greenhouse.io/",
@@ -145,7 +205,12 @@ CRAWL4AI_DISCOVERY_ALLOWED_DOMAINS = [
     "cutshort.io", "www.cutshort.io", "foundit.in", "www.foundit.in",
     "hirist.tech", "www.hirist.tech", "instahyre.com", "www.instahyre.com",
     "hiringcafe.com", "www.hiringcafe.com", "boards.greenhouse.io", "jobs.ashbyhq.com",
-    "jobs.lever.co", "ycombinator.com", "www.ycombinator.com", "linkedin.com", "www.linkedin.com"
+    "jobs.lever.co", "ycombinator.com", "www.ycombinator.com", "linkedin.com", "www.linkedin.com",
+    # Dedicated walk-in-drive aggregators — added because their seed URLs above were
+    # being silently dropped by _allowed_host() without a matching entry here.
+    "freshersworld.com", "www.freshersworld.com", "freshersvoice.com", "www.freshersvoice.com",
+    "careerforfreshers.com", "www.careerforfreshers.com", "fresherstech.com", "www.fresherstech.com",
+    "freshershunt.in", "www.freshershunt.in", "workindia.in", "www.workindia.in",
 ]
 
 CRAWL4AI_DISCOVERY_SEED_CONCURRENCY = int(os.environ.get("CRAWL4AI_DISCOVERY_SEED_CONCURRENCY", "4"))
@@ -192,8 +257,9 @@ FRESHER_SIGNALS = [
     "fresher", "freshers", "entry level", "entry-level", "0 year", "0 years", "0-1 year",
     "0–1 year", "0-2 years", "0–2 years", "0-1 yrs", "0-2 yrs", "new grad", "new graduate",
     "graduate", "graduate engineer", "graduate trainee", "software trainee", "GET",
-    "junior", "associate", "campus hire", "campus recruitment", "2026 batch", "2025 batch",
-    "recent graduate", "immediate joiner", "early career", "trainee engineer"
+    "junior", "associate", "campus hire", "campus recruitment", "2027 batch", "2026 batch",
+    "2025 batch", "2024 batch", "recent graduate", "immediate joiner", "early career",
+    "trainee engineer"
 ]
 
 SENIORITY_EXCLUSIONS = [

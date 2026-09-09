@@ -145,7 +145,12 @@ def _looks_job_url(url: str, title: str = "", text_signal: str = "") -> bool:
         
     job_title_signal = any(token in title_low for token in (
         "software engineer", "developer", "sde", "frontend", "backend", "full stack",
-        "product engineer", "ai engineer", "ml engineer", "genai", "intern", "programmer", "engineer"
+        "product engineer", "ai engineer", "ml engineer", "genai", "intern", "programmer", "engineer",
+        # Walk-in-drive aggregator posts are often titled like "X Walk-In Drive 2026"
+        # or "X Hiring Drive" without any engineer/developer token — add those signals
+        # so the new freshersvoice/careerforfreshers/fresherstech/freshershunt seeds
+        # actually get recognized instead of silently failing _looks_job_url.
+        "walk-in", "walkin", "walk in", "hiring drive", "trainee", "off campus", "off-campus"
     ))
     
     job_text_signal = any(token in text_low for token in (
@@ -382,8 +387,12 @@ def _write_diagnostics(results: list[tuple[str, list[JobListing], int, bool, int
 
 
 async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
+    # BUG FIX: filter by allowed-host first, THEN cap to max_seeds. Slicing before
+    # filtering meant any invalid/misconfigured seed earlier in the list silently
+    # pushed valid seeds (e.g. new walk-in aggregators appended at the end) past
+    # the cap and out of the crawl entirely.
     max_seeds = max(1, int(getattr(config, "CRAWL4AI_DISCOVERY_MAX_SEEDS", 12)))
-    seeds = [seed for seed in _discovery_seeds()[:max_seeds] if _allowed_host(seed)]
+    seeds = [seed for seed in _discovery_seeds() if _allowed_host(seed)][:max_seeds]
     if not seeds:
         return [], DiscoveryMetrics()
 
