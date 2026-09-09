@@ -7,3 +7,6 @@ temp_artifacts/
 graphify-out/
 .claude/
 *.log
+
+run-check/
+run-check2/
