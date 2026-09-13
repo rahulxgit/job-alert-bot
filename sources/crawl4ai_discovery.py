@@ -29,6 +29,16 @@ _AGGREGATE_MARKERS = (
     "/search", "/category", "/categories", "/tag", "/tags", "/browse",
     "/find-jobs", "jobs.html", "careers-at", "jobs-at",
 )
+# Naukri-style category/listing-index pages (e.g. "/java-developer-jobs-in-bangalore",
+# "/fullstack-developer-jobs", "/software-engineer-fresher-jobs-in-pune") were being
+# misclassified as real job postings: their titles contain "developer"/"engineer" so
+# they satisfied the fallback job_title_signal check below, and their path doesn't
+# match any of the _AGGREGATE_MARKERS above. Regex-match the "<role>-jobs[-in-city]"
+# URL shape directly instead.
+_AGGREGATE_URL_PATTERN = re.compile(r"-jobs(-in-[a-z-]+)?(/?$|\?)", re.IGNORECASE)
+# Naukri category-page titles are almost always "<N> <Role> Job Vacancies In <City> -
+# Naukri.com" — a strong, distinctive signal that this is a listing index, not a post.
+_AGGREGATE_TITLE_PATTERN = re.compile(r"^\d[\d,]*\s+.*job\s+vacanc", re.IGNORECASE)
 _JOB_TEXT_SIGNALS = (
     "requirements", "qualifications", "responsibilities", "experience",
     "what you'll do", "what you will do", "apply", "skills", "education",
@@ -127,7 +137,18 @@ def _looks_job_url(url: str, title: str = "", text_signal: str = "") -> bool:
     
     if any(marker in low for marker in _AGGREGATE_MARKERS):
         return False
-        
+
+    # BUG FIX: Naukri-style category/listing-index pages ("/java-developer-jobs-in-
+    # bangalore", "/fullstack-developer-jobs") were slipping through as real job
+    # postings because their titles contain "developer"/"engineer", satisfying the
+    # job_title_signal fallback below. Reject on the URL shape or the distinctive
+    # "N ... Job Vacancies" title pattern before that fallback ever runs.
+    parsed_for_agg = urlparse(normalized)
+    if _AGGREGATE_URL_PATTERN.search(parsed_for_agg.path):
+        return False
+    if _AGGREGATE_TITLE_PATTERN.search(title_low):
+        return False
+
     job_url_patterns = (
         r"/job-listings-[^/?]+", r"/job/[^/?]+", r"/jobs/[^/?]+", r"/jobs/view/[^/?]+",
         r"/vacancy/[^/?]+", r"/position/[^/?]+", r"/internship/[^/?]+", r"/viewjob(?:[/?]|$)",
@@ -223,6 +244,17 @@ def _extract_title(markdown: str, fallback: str) -> str:
 
 
 def _guess_company(title: str, url: str) -> str:
+    # Naukri-style titles are "<City> - <Company> - <N> to <M> years of experience".
+    # The old logic took everything after the FIRST " - ", which for a 3+ segment
+    # title returned the whole "Company - N to M years of experience" tail instead
+    # of isolating just the company. Recognize the trailing "years of experience"
+    # segment and take the piece immediately before it.
+    parts = [p.strip() for p in title.split(" - ") if p.strip()]
+    if len(parts) >= 3 and re.search(r"years? of experience|yrs? of experience", parts[-1], re.IGNORECASE):
+        candidate = parts[-2]
+        if 1 < len(candidate) < 80:
+            return candidate
+
     for separator in (" at ", " - ", " | "):
         if separator in title:
             candidate = title.split(separator, 1)[1].strip(" -|")

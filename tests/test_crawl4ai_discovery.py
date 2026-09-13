@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import config
 import main
 import sources.crawl4ai_discovery as discovery
-from sources.crawl4ai_discovery import _extract_links, _extract_title, _looks_job_url, _looks_like_job_text, _normalize_url
+from sources.crawl4ai_discovery import _extract_links, _extract_title, _looks_job_url, _looks_like_job_text, _normalize_url, _guess_company
 
 
 def test_normalize_url_removes_tracking_parameters():
@@ -24,6 +24,43 @@ def test_job_url_classifier_accepts_supported_detail_pages_and_rejects_aggregate
     assert _looks_job_url("https://www.hiringcafe.com/jobs/software-engineer-123", "Software Engineer")
     assert _looks_job_url("https://example.com/job/software-engineer-123", "Software Engineer") is False
     assert not _looks_job_url("https://boards.greenhouse.io/search?q=software-engineer", "Search results")
+
+
+def test_job_url_classifier_rejects_naukri_category_index_pages():
+    """Regression: real production sheet data showed Naukri category/search-index
+    pages (e.g. '/java-developer-jobs-in-bangalore') being misclassified as actual
+    job postings with high fit scores, because their titles ('4401 Java Developer
+    Job Vacancies In Bangalore - Naukri.com') contain 'developer', which satisfied
+    the job_title_signal fallback. Both the URL shape and the distinctive title
+    pattern must be rejected."""
+    assert not _looks_job_url(
+        "https://www.naukri.com/java-developer-jobs-in-bangalore",
+        "4401 Java Developer Job Vacancies In Bangalore - Naukri.com",
+    )
+    assert not _looks_job_url(
+        "https://www.naukri.com/fullstack-developer-jobs",
+        "31809 Fullstack Developer Job Vacancies In September 2026 - Naukri.com",
+    )
+    assert not _looks_job_url(
+        "https://www.naukri.com/walkin-software-developer-jobs-in-pune",
+        "571 Walkin Software Developer Job Vacancies In Pune - Naukri.com",
+    )
+    # A genuine individual posting on the same domain must still pass.
+    assert _looks_job_url(
+        "https://www.naukri.com/job-listings-software-engineer-fresher-acme-pune-0-to-1-years-123456",
+        "Software Engineer Fresher - Acme - Pune",
+    )
+
+
+def test_guess_company_isolates_naukri_middle_segment():
+    """Regression: '<City> - <Company> - <N> to <M> years of experience' titles were
+    returning the whole 'Company - N to M years of experience' tail as the company
+    name instead of isolating just the company."""
+    title = "Bengaluru - Coddle Technologies - 2 to 3 years of experience"
+    assert _guess_company(title, "https://www.naukri.com/job-listings-x") == "Coddle Technologies"
+
+    title2 = "Navi Mumbai - Hdfc Bank - 0 to 1 years of experience"
+    assert _guess_company(title2, "https://www.naukri.com/job-listings-y") == "Hdfc Bank"
 
 
 def test_job_text_requires_reasonable_detail_content():
