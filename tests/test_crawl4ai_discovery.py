@@ -75,7 +75,7 @@ def test_discovery_seeds_run_with_bounded_concurrency(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    async def fake_seed(crawler, seed, run_config):
+    async def fake_seed(crawler, seed):
         # (seed, discovered, pages_seen, request_success, candidate_urls_found, anti_bot_detected)
         return seed, [], 1, True, 1, False
 
@@ -108,7 +108,7 @@ def test_discovery_raises_when_seeds_succeed_but_find_zero_candidates(monkeypatc
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    async def fake_seed(crawler, seed, run_config):
+    async def fake_seed(crawler, seed):
         return seed, [], 5, True, 0, False
 
     with patch.object(discovery, "AsyncWebCrawler", return_value=FakeCrawler()):
@@ -134,7 +134,7 @@ def test_discovery_raises_blocked_when_anti_bot_pages_detected(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    async def fake_seed(crawler, seed, run_config):
+    async def fake_seed(crawler, seed):
         return seed, [], 1, True, 0, True
 
     with patch.object(discovery, "AsyncWebCrawler", return_value=FakeCrawler()):

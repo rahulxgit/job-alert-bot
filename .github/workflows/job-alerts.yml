@@ -97,8 +97,14 @@ jobs:
           FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
           FIRECRAWL_ENABLED: "false"
           CRAWL4AI_DISCOVERY_ENABLED: "true"
-          CRAWL4AI_DISCOVERY_MAX_SEEDS: "20"
-          CRAWL4AI_DISCOVERY_MAX_PAGES: "1000"
+          # BUG FIX: MAX_PAGES used to be a de-facto GLOBAL budget shared across every
+          # seed (see sources/crawl4ai_discovery.py fix) — 1000 pages total meant the
+          # first few Pune seeds silently ate the whole budget and every seed after
+          # them (all of Bengaluru + the new walk-in aggregators) got zero pages. Now
+          # that each seed gets its own fresh budget, 1000/seed would massively blow
+          # up total runtime across 20+ seeds, so this is a genuine PER-SEED cap.
+          CRAWL4AI_DISCOVERY_MAX_SEEDS: "28"
+          CRAWL4AI_DISCOVERY_MAX_PAGES: "60"
           CRAWL4AI_DISCOVERY_MAX_DETAIL_PAGES: "5000"
           CRAWL4AI_DISCOVERY_SEED_CONCURRENCY: "4"
           CRAWL4AI_DISCOVERY_HEALTHCHECK_ENABLED: "true"

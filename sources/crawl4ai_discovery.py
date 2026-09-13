@@ -325,7 +325,21 @@ def _extract_result_markdown(result) -> tuple[str, str, str, list]:
     return url, markdown, title, extracted_links
 
 
-async def _crawl_seed(crawler, seed: str, run_config) -> tuple[str, list[JobListing], int, bool, int, bool]:
+async def _crawl_seed(crawler, seed: str) -> tuple[str, list[JobListing], int, bool, int, bool]:
+    # BUG FIX: build a fresh CrawlerRunConfig/strategy per seed instead of sharing
+    # one instance across every seed. BestFirstCrawlingStrategy tracks max_pages and
+    # visited-URL state internally; reusing one instance across 20+ concurrent seeds
+    # made max_pages a GLOBAL budget instead of a per-seed one. In practice this meant
+    # the first 4-5 successful seeds (all Pune) silently consumed the entire page
+    # budget and every seed after them — every single Bengaluru seed and all four new
+    # walk-in-aggregator seeds — returned 0 pages/candidates/jobs despite
+    # request_success=True, with no error or warning anywhere.
+    run_config = CrawlerRunConfig(
+        deep_crawl_strategy=_strategy(),
+        stream=True,
+        page_timeout=config.CRAWL4AI_DISCOVERY_TIMEOUT * 1000,
+        preserve_https_for_internal_links=True,
+    )
     discovered: list[JobListing] = []
     pages_seen = 0
     candidate_urls_found = 0
@@ -396,13 +410,6 @@ async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
     if not seeds:
         return [], DiscoveryMetrics()
 
-    run_config = CrawlerRunConfig(
-        deep_crawl_strategy=_strategy(),
-        stream=True,
-        page_timeout=config.CRAWL4AI_DISCOVERY_TIMEOUT * 1000,
-        preserve_https_for_internal_links=True,
-    )
-
     unique_rows: dict[str, JobListing] = {}
     seed_successes = 0
     seed_failures = 0
@@ -414,7 +421,7 @@ async def _discover() -> tuple[list[JobListing], DiscoveryMetrics]:
     async with AsyncWebCrawler(config=BrowserConfig(headless=True)) as crawler:
         async def bounded_seed(seed: str):
             async with semaphore:
-                return await _crawl_seed(crawler, seed, run_config)
+                return await _crawl_seed(crawler, seed)
         results = await asyncio.gather(*(bounded_seed(seed) for seed in seeds))
 
     for seed, rows, seed_pages_seen, request_success, seed_candidates, anti_bot_detected in results:
