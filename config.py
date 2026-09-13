@@ -38,7 +38,7 @@ COMMON_SEARCH_TERMS = (
     + AI_TERMS + DOTNET_TERMS + JAVA_TERMS + JS_TERMS
 )
 
-COMMON_LOCATIONS = ["Pune", "Bengaluru", "Hyderabad", "Gurugram", "Remote", "India"]
+COMMON_LOCATIONS = ["Pune", "Bengaluru"]
 
 PUNE_NEIGHBORHOODS = [
     "pune", "hinjewadi", "kharadi", "hadapsar", "viman nagar", "baner", 
@@ -87,12 +87,10 @@ PUNE_WALKIN_PRIORITY = os.environ.get("PUNE_WALKIN_PRIORITY", "true").lower() ==
 FRESHER_ONLY_MODE = os.environ.get("FRESHER_ONLY_MODE", "true").lower() == "true"
 
 # --- jobspy (LinkedIn/Google) ---
-# NOTE: jobspy does a term x location cross-product, so walk-in terms will still
-# occasionally match in Hyderabad/Gurugram/Remote since they share this combo list
-# with regular search terms. True walk-in-only Pune/Bengaluru scoping happens
-# downstream in ai/evaluator.py via WALKIN_LOCATIONS/WALKIN_NEIGHBORHOODS.
+# You asked to lock search scope to Pune + Bengaluru only (fresher, walk-in-focused) —
+# no more Hyderabad/Gurugram/Remote in active search anywhere.
 SEARCH_TERMS = COMMON_SEARCH_TERMS + WALKIN_SEARCH_TERMS
-LOCATIONS = WALKIN_LOCATIONS + ["Hyderabad", "Gurugram", "Remote", "India"]
+LOCATIONS = WALKIN_LOCATIONS
 JOBSPY_SITES = ["linkedin", "google"]
 RESULTS_PER_SITE = int(os.environ.get("JOBSPY_RESULTS_PER_SITE", "15"))
 JOBSPY_CALL_TIMEOUT_SECONDS = int(os.environ.get("JOBSPY_CALL_TIMEOUT_SECONDS", "60"))
@@ -300,10 +298,16 @@ CORE_TECH_TERMS = [
 
 PREFERRED_LOCATIONS = [
     "Pune", "Hinjewadi", "Kharadi", "Hadapsar", "Magarpatta", "Baner", "Wakad", "Viman Nagar", "Kothrud", "Pimpri-Chinchwad",
-    "Bengaluru", "Hyderabad", "Gurugram", "Remote"
+    "Bengaluru", "Bangalore", "Koramangala", "Whitefield", "Electronic City", "Indiranagar", "HSR Layout"
 ]
-NAUKRI_SEARCH_LOCATIONS = ["Pune", "Bengaluru", "Hyderabad", "Gurugram"]
-NON_PREFERRED_LOCATION_SIGNALS = ["united states", "usa", "canada", "uk", "united kingdom", "australia", "germany", "france", "singapore", "dubai", "uae", "europe"]
+NAUKRI_SEARCH_LOCATIONS = ["Pune", "Bengaluru"]
+NON_PREFERRED_LOCATION_SIGNALS = [
+    "united states", "usa", "canada", "uk", "united kingdom", "australia", "germany", "france",
+    "singapore", "dubai", "uae", "europe",
+    # You asked to scope search to Pune + Bengaluru only — actively deprioritize these
+    # other common Indian hub cities rather than leaving them neutral.
+    "hyderabad", "gurugram", "gurgaon", "remote"
+]
 
 EDUCATION_OPEN_SIGNALS = [
     "any engineering branch", "all engineering branches", "any branch", "any degree", "bachelor's degree",

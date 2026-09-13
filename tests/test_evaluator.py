@@ -94,7 +94,7 @@ def test_any_engineering_branch_remains_eligible():
         job_url="x",
         title="Graduate Software Engineer",
         description="React Node.js. Any engineering branch. 0-2 years.",
-        location="Hyderabad, India",
+        location="Pune, India",
     )
     assert keyword_prefilter_score(listing) >= config.MIN_LIGHTWEIGHT_SCORE
 
@@ -189,17 +189,17 @@ def test_prefilter_preserves_300_candidate_cap_and_source_fairness():
     for i in range(200):
         sources.append(JobListing(
             job_url=f"internshala/{i}", title="Full Stack Developer", description=template,
-            location="Hyderabad, India", source="Internshala",
+            location="Bengaluru, India", source="Internshala",
         ))
     for i in range(150):
         sources.append(JobListing(
             job_url=f"firecrawl/{i}", title="React Developer", description=template,
-            location="Remote", source="Firecrawl",
+            location="Pune, India", source="Firecrawl",
         ))
     for i in range(100):
         sources.append(JobListing(
             job_url=f"wellfound/{i}", title="Backend Developer", description=template,
-            location="India", source="Wellfound",
+            location="Bengaluru, India", source="Wellfound",
         ))
 
     old_max = config.MAX_LLM_CANDIDATES
